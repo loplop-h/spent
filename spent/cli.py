@@ -72,6 +72,21 @@ def dashboard() -> None:
 
 
 @main.command()
+@click.option("--port", "-p", default=5050, help="Port number (default: 5050)")
+@click.option("--no-open", is_flag=True, help="Don't auto-open browser")
+def web(port: int, no_open: bool) -> None:
+    """Open the web dashboard in your browser.
+
+    \b
+    Beautiful charts showing costs, models, savings, and forecasts.
+        spent web              # opens at http://localhost:5050
+        spent web --port 8080  # custom port
+    """
+    from .web import run_server
+    run_server(port=port, open_browser=not no_open)
+
+
+@main.command()
 @click.option("--compact", "-c", is_flag=True, help="Single-line mode (for status bars)")
 @click.option("--interval", "-i", default=1.0, help="Update interval in seconds")
 def ticker(compact: bool, interval: float) -> None:
