@@ -78,6 +78,51 @@ from anthropic import Anthropic
 client = track(Anthropic())
 ```
 
+### Option 3: Smart auto-routing (save money automatically)
+
+```python
+from spent import track
+from openai import OpenAI
+
+client = track(OpenAI(), optimize=True)
+
+# spent analyzes each prompt and routes to the optimal model:
+# - "Classify this as spam" -> gpt-4o-mini (simple task, 94% cheaper)
+# - "Write a binary search" -> stays on gpt-4o (complex, needs quality)
+```
+
+Or via CLI:
+
+```bash
+spent run --optimize python app.py
+```
+
+### Option 4: Real-time monitoring
+
+```bash
+# Live ticker (run alongside Claude Code, Cursor, etc.)
+spent ticker
+
+# Compact panel widget
+spent panel
+
+# One-line status
+spent status
+# -> spent: $4.27 | 47 calls | 125,430 tok
+```
+
+### Option 5: Claude Code skill
+
+```bash
+# Install as a Claude Code skill (one time)
+spent setup claude-code
+
+# Then use directly in Claude Code:
+# /spent          -> today's costs
+# /spent sessions -> history
+# /spent optimize -> routing guide
+```
+
 ## Features
 
 | Feature | Status |
@@ -90,8 +135,13 @@ client = track(Anthropic())
 | Budget alerts | Done |
 | Session history | Done |
 | JSON/CSV export | Done |
+| Smart model routing (`--optimize`) | Done |
+| Task classification (12 task types) | Done |
+| Live ticker (real-time monitoring) | Done |
+| Compact panel widget | Done |
+| Claude Code skill (`/spent`) | Done |
+| Claude Code statusline | Done |
 | Google AI tracking | Roadmap |
-| Auto model routing | Roadmap |
 | Team cost sharing | Roadmap |
 | CI/CD cost reports | Roadmap |
 
