@@ -1,245 +1,206 @@
 <p align="center">
   <h1 align="center">spent</h1>
-  <p align="center"><strong>See what your AI really costs. Zero code changes.</strong></p>
+  <p align="center"><strong>See what your Claude Code sessions really cost.</strong></p>
+  <p align="center">Efficiency score. Productive vs wasted breakdown. Live terminal dashboard.</p>
 </p>
 
 <p align="center">
   <a href="https://pypi.org/project/spent/"><img src="https://img.shields.io/pypi/v/spent?style=flat-square" alt="PyPI"></a>
   <a href="https://pypi.org/project/spent/"><img src="https://img.shields.io/pypi/pyversions/spent?style=flat-square" alt="Python"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License"></a>
-  <a href="https://github.com/loplop-h/spent/stargazers"><img src="https://img.shields.io/github/stars/maxhu/spent?style=flat-square" alt="Stars"></a>
+  <a href="https://github.com/loplop-h/spent/stargazers"><img src="https://img.shields.io/github/stars/loplop-h/spent?style=flat-square" alt="Stars"></a>
 </p>
 
 ---
 
-You're spending hundreds on LLM APIs every month. Do you know which calls cost what?
+You use Claude Code every day. Do you know how much each session costs? Which tool uses are productive and which are wasted?
 
-**spent** tracks every token, every model, every dollar -- automatically. One command. No code changes. Beautiful reports.
+**spent** tracks every tool use, classifies it as productive, neutral, or wasted, and gives you an efficiency score. No API keys. No external services. Everything runs locally from Claude Code's own hook system.
 
 ```
-$ spent run python app.py
-
- ┌──────────────────────────────────────────┐
- │  spent                    session a1b2c3 │
- │                                          │
- │  Total Cost:    $4.2731                  │
- │  Tokens:        125,430  (98k in / 27k out)
- │  API Calls:     47                       │
- │  Duration:      2m 34s                   │
- └──────────────────────────────────────────┘
-
-  Model                   Calls  Tokens     Cost     Share
-  gpt-4o                  12     84,200     $3.8100  ████████░░ 89%
-  gpt-4o-mini             31     38,100     $0.4200  █░░░░░░░░░ 10%
-  claude-sonnet-4-6        4      3,130     $0.0431  ░░░░░░░░░░  1%
-
-  Savings Opportunities: ~$2.1000
-    gpt-4o -> gpt-4o-mini: save $2.10 (55%) on 12 calls
+ ┌─────────────────────────────────────────────────────┐
+ │  spent                                   session    │
+ │                                                     │
+ │  72%  $0.4831  14m23s  38 tools                     │
+ │  ████████████████░░░░░░                             │
+ ├─────────────────────────────────────────────────────┤
+ │  Breakdown                                          │
+ │  Productive  $0.3214  ██████████████████             │
+ │  Neutral     $0.1102  ██████                         │
+ │  Wasted      $0.0515  ███                            │
+ ├─────────────────────────────────────────────────────┤
+ │  By Tool                                            │
+ │  ✏ Edit       12   $0.1832   ████████░░ 38%         │
+ │  📖 Read        9   $0.0891   ████░░░░░░ 18%         │
+ │  ⌘ Bash        8   $0.0744   ███░░░░░░░ 15%         │
+ │  🔍 Grep        5   $0.0612   ███░░░░░░░ 13%         │
+ │  🤖 Agent       4   $0.0752   ███░░░░░░░ 16%         │
+ ├─────────────────────────────────────────────────────┤
+ │  Timeline                                           │
+ │  ✏ 14:23:01 Edit     $0.0182  productive            │
+ │  ⌘ 14:23:15 Bash     $0.0094  wasted                │
+ │  ✏ 14:23:22 Edit     $0.0201  productive            │
+ │  📖 14:23:30 Read     $0.0088  neutral               │
+ ├─────────────────────────────────────────────────────┤
+ │  Tips                                               │
+ │  💡 $0.0515 wasted on failed/repeated actions        │
+ │  💡 Edit is 38% of your spend                        │
+ │                                                     │
+ │  spent 14:23:45 | Ctrl+C to exit                    │
+ └─────────────────────────────────────────────────────┘
 ```
 
 ## Quick Start
 
 ```bash
 pip install spent
+spent cc setup    # install Claude Code hooks (once)
+spent cc live     # open dashboard in a side terminal
 ```
 
-### Option 1: Zero code changes (recommended)
+That's it. `spent cc setup` installs three hooks into `~/.claude/settings.json`:
 
-Just prefix your command:
+- **PostToolUse** -- logs every tool invocation (Edit, Read, Bash, Grep, etc.)
+- **SessionStart** -- marks when a session begins
+- **Stop** -- marks session end and writes the final summary
 
-```bash
-spent run python app.py
-spent run python -m pytest
-spent run --budget 5.00 python train.py
-```
-
-### Option 2: One line of code
-
-```python
-from spent import track
-from openai import OpenAI
-
-client = track(OpenAI())
-
-# Use normally -- costs tracked automatically
-response = client.chat.completions.create(
-    model="gpt-4o",
-    messages=[{"role": "user", "content": "Hello!"}],
-)
-# Exit summary printed automatically
-```
-
-Works with Anthropic too:
-
-```python
-from spent import track
-from anthropic import Anthropic
-
-client = track(Anthropic())
-```
-
-### Option 3: Smart auto-routing (save money automatically)
-
-```python
-from spent import track
-from openai import OpenAI
-
-client = track(OpenAI(), optimize=True)
-
-# spent analyzes each prompt and routes to the optimal model:
-# - "Classify this as spam" -> gpt-4o-mini (simple task, 94% cheaper)
-# - "Write a binary search" -> stays on gpt-4o (complex, needs quality)
-```
-
-Or via CLI:
-
-```bash
-spent run --optimize python app.py
-```
-
-### Option 4: Real-time monitoring
-
-```bash
-# Live ticker (run alongside Claude Code, Cursor, etc.)
-spent ticker
-
-# Compact panel widget
-spent panel
-
-# One-line status
-spent status
-# -> spent: $4.27 | 47 calls | 125,430 tok
-```
-
-### Option 5: Claude Code skill
-
-```bash
-# Install as a Claude Code skill (one time)
-spent setup claude-code
-
-# Then use directly in Claude Code:
-# /spent          -> today's costs
-# /spent sessions -> history
-# /spent optimize -> routing guide
-```
+Restart Claude Code after setup. Costs are tracked automatically from that point.
 
 ## Features
 
 | Feature | Status |
 |---------|--------|
-| OpenAI cost tracking | Done |
-| Anthropic cost tracking | Done |
-| Beautiful terminal dashboard | Done |
-| Per-model cost breakdown | Done |
-| Savings recommendations | Done |
-| Budget alerts | Done |
-| Session history | Done |
-| JSON/CSV export | Done |
-| Smart model routing (`--optimize`) | Done |
-| Task classification (12 task types) | Done |
-| Live ticker (real-time monitoring) | Done |
-| Compact panel widget | Done |
+| Per-session cost tracking | Done |
+| Efficiency score (0-100) | Done |
+| Productive / neutral / wasted classification | Done |
+| Live terminal dashboard (`spent cc live`) | Done |
+| Per-tool cost breakdown | Done |
+| Session history and trends | Done |
+| Web dashboard (`spent cc dashboard`) | Done |
+| Efficiency tips | Done |
 | Claude Code skill (`/spent`) | Done |
-| Claude Code statusline | Done |
-| Google AI tracking | Roadmap |
-| Team cost sharing | Roadmap |
-| CI/CD cost reports | Roadmap |
+| Statusline integration | Done |
+| JSON export | Done |
+| Multi-model pricing (Opus, Sonnet, Haiku) | Done |
+| Cost anomaly detection | Roadmap |
+| Team cost aggregation | Roadmap |
+| CI usage reports | Roadmap |
+
+## How It Works
+
+Claude Code hooks fire on every tool use. spent logs each event to a local JSONL file at `~/.spent/claude-sessions.jsonl` with:
+
+- Timestamp
+- Tool name (Edit, Read, Bash, Grep, Glob, Agent, etc.)
+- Input/output character counts
+- Session ID
+- Model identifier
+
+From this log, spent estimates token counts (characters / 4, plus context overhead that grows with conversation length) and calculates cost using Claude model pricing:
+
+| Model | Input (per 1M tokens) | Output (per 1M tokens) |
+|-------|----------------------|------------------------|
+| Opus | $15.00 | $75.00 |
+| Sonnet | $3.00 | $15.00 |
+| Haiku | $0.80 | $4.00 |
+
+No API calls. No network requests. Everything is estimated locally from hook data.
 
 ## Commands
 
 ```bash
-# Track costs (zero code changes)
-spent run python app.py
+# Setup (run once)
+spent cc setup          # install hooks + statusline
 
-# Set a budget alert
-spent run --budget 10.00 python app.py
+# Live monitoring
+spent cc live           # full-screen terminal dashboard (side pane)
+spent cc status         # quick panel with score + cost + breakdown
+spent cc score          # one-line efficiency score
 
-# Live dashboard (watches costs in real-time)
-spent dashboard
+# Session history
+spent cc history        # last 7 days of sessions
+spent cc history -d 30  # last 30 days
+spent cc tips           # efficiency tips for current session
 
-# View cost reports
-spent report              # Recent sessions
-spent report --today      # Today's costs
-spent report --json       # Machine-readable
-spent report --csv        # Spreadsheet-ready
+# Web dashboard
+spent cc dashboard      # open browser dashboard (localhost:5050)
 
-# Clear all data
-spent reset
+# Controls
+spent cc on             # enable tracking
+spent cc off            # disable tracking
+
+# Data
+spent session           # current session detail
+spent session --today   # all sessions from today
+spent session --json    # machine-readable output
+spent reset             # delete all tracked data
 ```
 
-## How It Works
+## Efficiency Scoring
 
-**spent** transparently patches the OpenAI and Anthropic Python SDKs at import time. When your code calls `client.chat.completions.create(...)`, spent:
+Every tool use is classified into one of three categories:
 
-1. Intercepts the call (before and after)
-2. Extracts token usage from the response
-3. Calculates cost using up-to-date pricing
-4. Stores the record in a local SQLite database
-5. Returns the original response unchanged
+### Productive
 
-Your code runs exactly the same. No API proxies. No network changes. No latency added to API calls themselves.
+Actions that produce code or move work forward.
 
-Data stays on your machine at `~/.spent/data.db`.
+- **Edit** / **Write** / **MultiEdit** -- code written or modified
+- **Agent** -- task delegation
+- **Bash** -- commands that succeed (no error indicators)
 
-## Supported Models
+### Neutral
 
-40+ models with up-to-date pricing:
+Information gathering. Necessary but not directly productive.
 
-| Provider | Models |
-|----------|--------|
-| **OpenAI** | GPT-4o, GPT-4o-mini, GPT-4-Turbo, GPT-4, GPT-3.5-Turbo, o1, o3, o3-mini, o4-mini |
-| **Anthropic** | Claude Opus 4, Claude Sonnet 4, Claude Haiku 4, Claude 3.5/3 family |
-| **Google** | Gemini 2.5 Pro/Flash, 2.0 Flash, 1.5 Pro/Flash |
-| **DeepSeek** | DeepSeek Chat, DeepSeek Reasoner |
-| **Mistral** | Mistral Large, Mistral Small, Codestral |
-| **Groq** | Llama 3.3 70B, Llama 3.1 8B, Mixtral 8x7B |
+- **Read** / **Grep** / **Glob** -- searching and reading files
+- **TodoRead** / **TodoWrite** -- task management
+- **WebSearch** / **WebFetch** -- research
 
-Unknown models are tracked with $0 cost (tokens still recorded).
+### Wasted
 
-## Budget Alerts
+Actions that cost tokens but didn't advance the task.
 
-Set a budget and get warned when you exceed it:
+- **Bash** with error output -- failed commands, stack traces
+- **Read** of the same file within 60 seconds -- redundant reads
+- **Edit** of the same file within 30 seconds of another Edit -- rapid re-edits (usually fixing a mistake)
 
-```bash
-# CLI
-spent run --budget 5.00 python app.py
+The efficiency score is a weighted formula:
 
-# Python
-from spent import track, configure
-configure(budget=5.00)
-client = track(OpenAI())
+```
+score = ((productive * 1.0) + (neutral * 0.5) + (wasted * 0.0)) / total * 100
 ```
 
-When the budget is exceeded:
+A score of 70+ is good. Below 40 means a lot of time is going to failed attempts and re-work.
+
+## Claude Code Skill
+
+spent includes a `/spent` skill for use directly inside Claude Code sessions:
+
 ```
-[spent] BUDGET ALERT: $5.0231 spent (budget: $5.00)
+/spent              # show current session costs and efficiency
 ```
 
-## Why spent?
+The skill is automatically available if spent is installed. It reads the same JSONL log and displays a formatted summary without leaving your Claude Code session.
 
-| | spent | Manual tracking | LLM framework built-in |
-|---|---|---|---|
-| Code changes needed | 0 | Lots | Framework-specific |
-| Works across providers | Yes | Manual per-provider | Usually one provider |
-| Historical data | SQLite | Spreadsheets | In-memory only |
-| Savings recommendations | Automatic | You do the math | No |
-| Export formats | JSON, CSV | Copy-paste | Varies |
-| Privacy | 100% local | Depends | Often cloud |
+## Privacy
+
+- All data stays on your machine at `~/.spent/`
+- No external API calls, no telemetry, no network requests
+- Hook scripts run locally as async shell commands
+- The JSONL log contains only tool names, character counts, and timestamps -- no file contents, no prompts, no code
 
 ## Roadmap
 
-- [ ] **Google AI / Vertex tracking** -- Gemini model support
-- [ ] **Auto model routing** -- automatically use cheaper models for simple tasks
+- [ ] **Cost anomaly detection** -- alert when a session is burning tokens faster than usual
 - [ ] **Team dashboards** -- aggregate costs across team members
-- [ ] **CI/CD integration** -- cost reports in GitHub Actions / PR comments
-- [ ] **Ollama / local model tracking** -- track local inference costs (compute time)
-- [ ] **Web dashboard** -- browser-based cost explorer
-- [ ] **Slack / Discord alerts** -- budget notifications in team channels
-- [ ] **Cost anomaly detection** -- alert on unusual spending patterns
+- [ ] **CI usage reports** -- cost per PR, cost per branch
+- [ ] **Session comparison** -- compare efficiency across sessions
+- [ ] **Custom classification rules** -- let users define their own productive/wasted rules
+- [ ] **Notification thresholds** -- alert when session cost exceeds a limit
 
 ## Contributing
 
-Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+Contributions welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ```bash
 git clone https://github.com/loplop-h/spent.git

@@ -1,4 +1,4 @@
-# Launch Plan for spent
+# Launch Plan for spent (Claude Code Session Cost Tracker)
 
 ## Timing
 - Best days: Tuesday-Thursday
@@ -11,176 +11,130 @@
 
 **Title:**
 ```
-Show HN: Spent -- see what your LLM API calls actually cost (zero code changes)
+Show HN: Spent -- see your Claude Code efficiency score and session costs
 ```
 
 **Body:**
 ```
-I've been building apps with LLM APIs for a while and I had no real idea what anything cost until the bill arrived. I'd look at the Anthropic or OpenAI dashboard at the end of the month, see a number, and think "that seems high" -- but I had no idea which calls in which scripts were responsible.
+I use Claude Code every day and I had no idea how much each session actually cost or where the money went. The Anthropic dashboard gives you a monthly total, but it doesn't tell you which sessions were productive and which were burning tokens on repeated file reads and failed bash commands.
 
-The breaking point was when I realized a batch evaluation script was using gpt-4o for tasks that gpt-4o-mini could handle identically. I was spending roughly 17x more per call on output tokens. Nobody told me. I had to go manually read pricing pages and do the math.
+The breaking point was when I watched a session spend 40+ tool calls going in circles -- re-reading the same files, running broken commands, grepping for things it had already found. The session cost $8 and produced two small edits. I thought: what if I could score this?
 
-So I built spent. It's a CLI tool and Python library that tracks every OpenAI and Anthropic API call, records the token counts, computes the cost using up-to-date pricing, and prints a breakdown when your script finishes.
+So I built spent. It's a CLI tool that hooks into Claude Code sessions (via PostToolUse, SessionStart, and Stop hooks), classifies every action, and computes an efficiency score from 0-100%.
 
-The simplest usage is just prefixing your command:
+The classification is simple:
+- Productive: Edit, Write, Agent calls -- actions that change code
+- Neutral: Read, Grep, Glob -- necessary reconnaissance
+- Wasted: failed Bash commands, repeated identical Reads, tool errors
+
+Setup is two commands:
 
     pip install spent
-    spent run python app.py
+    spent cc setup
 
-No code changes needed. When the script exits, you get a per-model cost breakdown, total tokens, and automatic savings recommendations like "switch gpt-4o to gpt-4o-mini on these 12 calls, save $2.10."
+That configures the Claude Code hooks. From then on, every session is tracked automatically.
 
-How it works: spent monkey-patches the OpenAI and Anthropic SDK methods (chat.completions.create and messages.create) at import time. It wraps the original function, lets the call go through normally, then extracts token usage from the response object and records it in a local SQLite database at ~/.spent/data.db. The original response is returned unchanged. No proxy, no network changes, no latency added to the API calls themselves.
+The efficiency score is the interesting part. It's the ratio of productive actions to total actions, weighted by estimated cost. A session that makes 10 edits after 5 reads scores higher than one that reads 30 files and makes 2 edits.
 
-There's also a programmatic API if you prefer:
+You can see it live while working:
 
-    from spent import track
-    from openai import OpenAI
-    client = track(OpenAI())
+    spent cc live
 
-Other features: budget alerts (--budget 5.00), live terminal dashboard, session history, JSON/CSV export. All data stays local.
+That opens a terminal TUI you can put in a side pane -- it updates in real-time as Claude Code runs, showing cost accumulation, action classification, and the running efficiency score.
+
+There's also a web dashboard with a shareable card if you want to compare scores or flex your 94% session.
+
+How it works under the hood: the hooks fire on every tool use and session event, sending the action type and metadata to a local SQLite database. No external API calls. Nothing leaves your machine. The cost estimates are based on the model and token counts from the hook payloads.
 
 Limitations I want to be upfront about:
 
-- Python only. No JS/TS SDK support yet.
-- Only OpenAI and Anthropic SDKs are patched. Google AI, Mistral, etc. are on the roadmap but not wired up yet. (The pricing database has 40+ models from 6 providers, but the interception only works for the two SDKs.)
-- Streaming responses -- token counts come from the final response usage field, which most SDK calls include, but some streaming configurations may not report it.
-- It monkey-patches SDK internals, so it could break if openai or anthropic release a major SDK refactor. I pin to stable method paths and check for _spent_patched to avoid double-patching.
+- Costs are estimates, not exact billing amounts. Anthropic doesn't expose per-session billing through hooks, so spent uses token counts and published pricing to approximate. It's directionally accurate but won't match your invoice to the cent.
+- Requires hooks setup. spent cc setup writes to your Claude Code settings, which means you need to be comfortable with that.
+- The efficiency classification is opinionated. Someone doing deep code archaeology might have many Reads that are genuinely productive. The defaults work for typical coding sessions, but they're not universally correct.
+- Python only for the CLI. The hooks themselves are language-agnostic since Claude Code runs them as shell commands.
 
-This is v0.1.0. MIT licensed.
+It's open source and MIT licensed.
 
 GitHub: https://github.com/loplop-h/spent
-PyPI: https://pypi.org/project/spent/
 
-Happy to answer questions about the approach or take feature requests.
+Happy to answer questions about the hook architecture or the scoring algorithm.
 ```
 
 ---
 
-## 2. REDDIT (r/Python, r/MachineLearning, r/LocalLLaMA)
+## 2. REDDIT (r/ClaudeAI)
 
 **Title:**
 ```
-I built a tool that shows exactly where your OpenAI/Anthropic money goes -- and it found I was overspending by 94% on some calls
+I built a tool that classifies every Claude Code action as productive or wasted -- my efficiency score was 61%
 ```
 
 **Body:**
 ```
-A few weeks ago I sat down and actually calculated what my LLM API calls cost per-model. The results were not great.
+I've been using Claude Code daily for months and I always wondered: how much does each session actually cost, and am I using it well?
 
-I had a script that runs gpt-4o for a classification task -- basically deciding if text fits into one of 5 categories. Simple task. gpt-4o-mini handles it with the same accuracy. But gpt-4o output tokens cost $10 per million, gpt-4o-mini costs $0.60. That's a 94% difference, and I had no way to see it without manually counting tokens and checking pricing tables.
+The Anthropic dashboard shows a monthly number. That's it. No breakdown by session, no insight into whether Claude spent its time editing code or spinning its wheels re-reading the same file 15 times.
 
-The OpenAI dashboard shows you total spend per day, but not per-script, not per-model within a script, and definitely not "hey, you could use a cheaper model here." Anthropic's is similar.
+So I built **spent** -- a CLI tool that hooks into Claude Code and tracks every single action. It classifies each one:
 
-So I built **spent**. It's a CLI wrapper and Python library that intercepts all OpenAI and Anthropic SDK calls, records token usage, computes cost, and gives you a breakdown when your script finishes.
+- **Productive**: Edit, Write, Agent -- actions that produce code changes
+- **Neutral**: Read, Grep, Glob -- necessary research
+- **Wasted**: failed Bash commands, repeated identical Reads, tool errors
 
-Usage is one line in the terminal:
+Then it computes an **efficiency score from 0-100%**.
 
-    pip install spent
-    spent run python your_script.py
+My first session scored 61%. That stung. I watched the breakdown and saw that Claude had re-read the same 3 files six times each and ran 4 bash commands that all failed with the same error. Nearly 40% of the session cost was reconnaissance that went nowhere.
 
-No code changes to your app. When it finishes you get a table showing each model, how many calls it made, the token count, the cost, and what percentage of your total it represents. It also suggests cheaper alternatives automatically.
+After adjusting my prompts to be more specific and front-loading context, I got subsequent sessions up to 85-90%.
 
-Under the hood it monkey-patches the SDK create methods, extracts the usage field from responses, and stores everything in a SQLite database on your machine (~/.spent/data.db). Nothing leaves your computer.
+**The setup is two commands:**
 
-It also has:
-- Budget alerts: `spent run --budget 5.00 python train.py`
-- A live dashboard: `spent dashboard`
-- Historical reports: `spent report --today` or `spent report --json`
-- CSV export for spreadsheet people
+```
+pip install spent
+spent cc setup
+```
 
-Current limitations: Python only, and only OpenAI + Anthropic SDKs are actually intercepted right now. The pricing database covers 40+ models across 6 providers (including Gemini, DeepSeek, Mistral, Groq), but active tracking is limited to the two patched SDKs. More providers are on the roadmap.
+That installs hooks into Claude Code (PostToolUse, SessionStart, Stop). From then on, tracking is automatic.
 
-It's open source, MIT licensed, and has zero dependencies beyond click and rich.
+**What you get:**
 
-If you're spending any nontrivial amount on LLM APIs, I'd genuinely recommend just running your main scripts under `spent run` once to see where the money goes. The results surprised me.
+- `spent cc live` -- a terminal TUI for a side pane, updates in real-time as Claude works
+- Web dashboard with a shareable efficiency card
+- `/spent` skill you can use inside Claude Code itself
+- Per-session cost estimates based on model and token counts
+- All local, SQLite storage, zero API calls
 
-Source: https://github.com/loplop-h/spent
-PyPI: https://pypi.org/project/spent/
+**Important caveat:** costs are estimates. Anthropic doesn't expose exact per-session billing through hooks, so spent uses token counts and published pricing to approximate. It's close but not invoice-accurate.
+
+The efficiency score is opinionated -- Reads aren't inherently wasted, but repeated identical Reads are. Failed commands aren't inherently wasted, but failing the same command 4 times is. The scoring tries to capture "did this session spend its tokens on things that produced results?"
+
+I'm curious what scores other people get. I suspect heavy refactoring sessions score lower (lots of reading) and greenfield sessions score higher (lots of writing).
+
+**GitHub:** https://github.com/loplop-h/spent
+
+Open source, MIT licensed. Would love feedback on the classification logic -- it's the most subjective part of the tool.
 ```
 
 ---
 
-## 3. TWITTER/X (Thread - 6 tweets)
+## 3. TWITTER/X (Single Tweet)
 
-**Tweet 1:**
 ```
-I was mass spending on LLM APIs and had no idea which calls cost what.
+I built a tool that scores your Claude Code sessions on efficiency (productive edits vs wasted reads and failed commands). My first score: 61%. Now I'm at 90%.
 
-OpenAI's dashboard shows a daily total. Anthropic's is similar. Neither tells you which script, which model, or which calls are burning your budget.
+pip install spent && spent cc setup
 
-So I built something to find out.
-```
-
-**Tweet 2:**
-```
-First thing I discovered: a classification script was using gpt-4o when gpt-4o-mini would produce the same results.
-
-Output token cost difference: $10.00 vs $0.60 per million tokens.
-
-I was paying 94% more than necessary and had zero visibility into it.
-```
-
-**Tweet 3:**
-```
-The fix is one line in your terminal:
-
-pip install spent
-spent run python app.py
-
-That's it. No code changes. When your script finishes, you get a per-model cost breakdown with automatic savings recommendations.
-```
-
-**Tweet 4:**
-```
-Here's what the output looks like:
-
-spent               session a1b2c3
-
-Total Cost:    $4.2731
-Tokens:        125,430 (98k in / 27k out)
-API Calls:     47
-
-Model             Calls  Cost     Share
-gpt-4o            12     $3.8100  89%
-gpt-4o-mini       31     $0.4200  10%
-claude-sonnet      4     $0.0431   1%
-
-Savings: gpt-4o -> gpt-4o-mini: save $2.10 (55%)
-```
-
-**Tweet 5:**
-```
-What it does:
-
-- Tracks all OpenAI + Anthropic API costs automatically
-- 40+ models with up-to-date pricing
-- Budget alerts (--budget 5.00)
-- Live terminal dashboard
-- Session history with JSON/CSV export
-- SQLite local storage, 100% private
-- Zero dependencies beyond click + rich
-```
-
-**Tweet 6:**
-```
-It's open source and MIT licensed. v0.1.0 -- Python only for now.
-
-GitHub: github.com/loplop-h/spent
-PyPI: pypi.org/project/spent/
-
-pip install spent
-
-If you're spending any nontrivial amount on LLM APIs, run your scripts under "spent run" once. The results might surprise you.
+github.com/loplop-h/spent
 ```
 
 ---
 
-## Checklist de Lanzamiento
+## Launch Checklist
 
-- [ ] Elegir dia (martes-jueves)
-- [ ] Post en Hacker News a las 8-10 AM Eastern
-- [ ] Post en r/Python inmediatamente despues
-- [ ] Thread en Twitter/X inmediatamente despues
-- [ ] Responder TODOS los comentarios las primeras 12 horas
-- [ ] Post en r/MachineLearning al dia siguiente (no spam same-day)
-- [ ] Submit a awesome-python, awesome-llm (semana siguiente)
+- [ ] Pick a day (Tuesday-Thursday)
+- [ ] Post on Hacker News at 8-10 AM Eastern
+- [ ] Post on r/ClaudeAI immediately after
+- [ ] Tweet immediately after
+- [ ] Reply to ALL comments in the first 12 hours
+- [ ] Cross-post to r/Python the next day (different angle: the hooks architecture)
+- [ ] Submit to awesome-claude, awesome-python (the following week)

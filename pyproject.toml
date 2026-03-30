@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "spent"
 version = "0.2.0"
-description = "See what your AI really costs. Zero code changes."
+description = "Claude Code session cost tracker. Efficiency score, productive vs wasted breakdown, live terminal dashboard."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.9"
@@ -13,8 +13,8 @@ authors = [
     { name = "maxhu" },
 ]
 keywords = [
-    "llm", "ai", "cost", "tracking", "openai", "anthropic",
-    "tokens", "monitoring", "budget", "optimization",
+    "claude-code", "anthropic", "claude", "cost-tracking",
+    "efficiency", "ai", "tokens", "monitoring", "terminal", "tui",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
