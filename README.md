@@ -17,38 +17,16 @@ You use Claude Code every day. Do you know how much each session costs? Which to
 
 **spent** tracks every tool use, classifies it as productive, neutral, or wasted, and gives you an efficiency score. No API keys. No external services. Everything runs locally from Claude Code's own hook system.
 
-```
- ┌─────────────────────────────────────────────────────┐
- │  spent                                   session    │
- │                                                     │
- │  72%  $0.4831  14m23s  38 tools                     │
- │  ████████████████░░░░░░                             │
- ├─────────────────────────────────────────────────────┤
- │  Breakdown                                          │
- │  Productive  $0.3214  ██████████████████             │
- │  Neutral     $0.1102  ██████                         │
- │  Wasted      $0.0515  ███                            │
- ├─────────────────────────────────────────────────────┤
- │  By Tool                                            │
- │  ✏ Edit       12   $0.1832   ████████░░ 38%         │
- │  📖 Read        9   $0.0891   ████░░░░░░ 18%         │
- │  ⌘ Bash        8   $0.0744   ███░░░░░░░ 15%         │
- │  🔍 Grep        5   $0.0612   ███░░░░░░░ 13%         │
- │  🤖 Agent       4   $0.0752   ███░░░░░░░ 16%         │
- ├─────────────────────────────────────────────────────┤
- │  Timeline                                           │
- │  ✏ 14:23:01 Edit     $0.0182  productive            │
- │  ⌘ 14:23:15 Bash     $0.0094  wasted                │
- │  ✏ 14:23:22 Edit     $0.0201  productive            │
- │  📖 14:23:30 Read     $0.0088  neutral               │
- ├─────────────────────────────────────────────────────┤
- │  Tips                                               │
- │  💡 $0.0515 wasted on failed/repeated actions        │
- │  💡 Edit is 38% of your spend                        │
- │                                                     │
- │  spent 14:23:45 | Ctrl+C to exit                    │
- └─────────────────────────────────────────────────────┘
-```
+<p align="center">
+  <img src="docs/tui-screenshot.png" alt="spent TUI dashboard" width="600">
+</p>
+
+<details>
+<summary><strong>Web dashboard</strong></summary>
+<p align="center">
+  <img src="docs/web-dashboard.png" alt="spent web dashboard" width="700">
+</p>
+</details>
 
 ## Quick Start
 

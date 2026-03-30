@@ -94,11 +94,11 @@ def _classify_event(ev: dict, prev_reads: dict[str, float]) -> str:
     target = ev.get("target", "")
     ts_str = ev.get("ts", "")
 
-    # Wasted: Bash with error output
+    # Bash: wasted if error, otherwise productive (matches cost_engine.py)
     if tool == "Bash":
         if isinstance(output_text, str) and ("error" in output_text or "Error" in output_text):
             return "wasted"
-        return "neutral"
+        return "productive"
 
     # Wasted: repeated Read of same target within 60s
     if tool == "Read" and target:

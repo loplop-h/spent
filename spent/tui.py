@@ -110,7 +110,8 @@ def _build_layout(width: int, height: int):
     header_text.append(f"  {cost_str}", style="bold white")
     header_text.append(f"  {duration_str}", style="dim")
     header_text.append(f"  {tool_uses} tools", style="dim")
-    header_text.append(f"\n {score_bar}")
+    header_text.append("\n ")
+    header_text.append_text(Text.from_markup(score_bar))
 
     header = Panel(header_text, title="[bold]spent[/]", border_style="blue", height=4)
 

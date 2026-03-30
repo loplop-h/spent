@@ -78,7 +78,10 @@ try:
 
     line = json.dumps(record, ensure_ascii=False)
 
-    with open('$SPENT_DIR/claude-sessions.jsonl'.replace('$SPENT_DIR', '$HOME/.spent'), 'a') as f:
+    import os
+    spent_dir = os.path.join(os.path.expanduser('~'), '.spent')
+    os.makedirs(spent_dir, exist_ok=True)
+    with open(os.path.join(spent_dir, 'claude-sessions.jsonl'), 'a') as f:
         f.write(line + '\n')
 
 except Exception:
@@ -86,8 +89,8 @@ except Exception:
 " 2>/dev/null
 else
     # Fallback without Python -- minimal logging
-    TS=\$(date -u +'%Y-%m-%dT%H:%M:%S' 2>/dev/null || date +'%Y-%m-%dT%H:%M:%S')
-    echo \"{\\\"ts\\\":\\\"$TS\\\",\\\"event\\\":\\\"tool_use\\\",\\\"tool\\\":\\\"unknown\\\",\\\"input_size\\\":0,\\\"output_size\\\":0,\\\"session\\\":\\\"unknown\\\"}\" >> \"\$LOG_FILE\" 2>/dev/null
+    TS=$(date -u +'%Y-%m-%dT%H:%M:%S' 2>/dev/null || date +'%Y-%m-%dT%H:%M:%S')
+    echo "{\"ts\":\"$TS\",\"event\":\"tool_use\",\"tool\":\"unknown\",\"input_size\":0,\"output_size\":0,\"session\":\"unknown\"}" >> "$LOG_FILE" 2>/dev/null
 fi
 
 exit 0
