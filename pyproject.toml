@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "spent"
-version = "0.2.0"
+version = "0.3.0"
 description = "Claude Code session cost tracker. Efficiency score, productive vs wasted breakdown, live terminal dashboard."
 readme = "README.md"
 license = "MIT"
@@ -65,3 +65,9 @@ addopts = "-v --tb=short"
 
 [tool.hatch.build.targets.wheel]
 packages = ["spent"]
+
+[tool.hatch.build.targets.sdist]
+include = ["spent/**", "tests/**"]
+
+[tool.hatch.build]
+artifacts = ["spent/hooks/*.sh"]
