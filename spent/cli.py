@@ -105,6 +105,18 @@ def cc_off() -> None:
     click.echo("Tracking OFF.")
 
 
+@cc.command("live")
+def cc_live() -> None:
+    """Live terminal dashboard (keep open in a side pane).
+
+    \b
+    Split your terminal and run:
+        spent cc live
+    """
+    from .tui import run_tui
+    run_tui()
+
+
 @cc.command("dashboard")
 @click.option("--port", "-p", default=5050, help="Port (default: 5050)")
 def cc_dashboard(port: int) -> None:
