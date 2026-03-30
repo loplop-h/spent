@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "spent"
-version = "0.4.0"
+version = "0.4.1"
 description = "Claude Code session cost tracker. Efficiency score, productive vs wasted breakdown, live terminal dashboard."
 readme = "README.md"
 license = "MIT"
