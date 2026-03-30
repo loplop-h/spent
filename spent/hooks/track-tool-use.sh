@@ -1,73 +1,71 @@
 #!/usr/bin/env bash
 # spent -- PostToolUse hook for Claude Code session tracking.
 # Appends one JSONL line per tool invocation to ~/.spent/claude-sessions.jsonl.
-# Designed to be FAST (<50ms): read stdin, extract fields, append, exit.
-# If anything fails, exit silently -- never block Claude Code.
-
-set -e
+# Designed to be FAST (<50ms). Exit silently on any error.
 
 SPENT_DIR="$HOME/.spent"
 LOG_FILE="$SPENT_DIR/claude-sessions.jsonl"
-
-# Ensure log directory exists (fast no-op if it already does).
 mkdir -p "$SPENT_DIR" 2>/dev/null || true
 
-# Read the hook payload from stdin (Claude Code pipes JSON here).
-PAYLOAD=""
-if ! read -r -t 2 PAYLOAD; then
-    # No stdin or read timed out -- nothing to log.
-    exit 0
-fi
-
-# Bail out if payload is empty.
+# Read payload from stdin (Claude Code pipes JSON here).
+PAYLOAD=$(cat 2>/dev/null) || true
 [ -z "$PAYLOAD" ] && exit 0
 
-# Extract fields using lightweight string inspection.
-# We avoid jq for speed -- parse with bash builtins or simple tools.
-# The payload is a JSON object; we pull out what we need with grep/sed.
+# Find a working Python (test it actually runs, not just exists).
+PY=""
+if python3 -c "pass" >/dev/null 2>&1; then
+    PY="python3"
+elif python -c "pass" >/dev/null 2>&1; then
+    PY="python"
+fi
 
-# Tool name: look for "tool_name" or "tool" key.
-TOOL=""
-if command -v python3 >/dev/null 2>&1; then
-    # Fast Python one-liner (available on most systems with Claude Code).
-    TOOL=$(python3 -c "
+TOOL_NAME=""
+INPUT_SIZE=0
+OUTPUT_SIZE=0
+
+if [ -n "$PY" ]; then
+    PARSED=$(printf '%s' "$PAYLOAD" | $PY -c "
 import sys, json
 try:
-    d = json.loads(sys.argv[1])
-    t = d.get('tool_name', d.get('tool', ''))
+    d = json.loads(sys.stdin.read())
+    t = d.get('tool_name', d.get('tool', 'unknown'))
     inp = len(json.dumps(d.get('tool_input', d.get('input', ''))))
     out = len(json.dumps(d.get('tool_output', d.get('output', ''))))
-    print(f'{t}\t{inp}\t{out}')
+    out_text = str(d.get('tool_output', d.get('output', '')))[:200]
+    print(f'{t}\t{inp}\t{out}\t{out_text}')
 except Exception:
-    print('\t0\t0')
-" "$PAYLOAD" 2>/dev/null) || true
+    print('unknown\t0\t0\t')
+" 2>/dev/null) || true
+
+    if [ -n "$PARSED" ]; then
+        TOOL_NAME=$(echo "$PARSED" | cut -f1)
+        INPUT_SIZE=$(echo "$PARSED" | cut -f2)
+        OUTPUT_SIZE=$(echo "$PARSED" | cut -f3)
+        OUTPUT_TEXT=$(echo "$PARSED" | cut -f4)
+    fi
 fi
 
-# Parse the tab-delimited output.
-if [ -n "$TOOL" ]; then
-    TOOL_NAME=$(echo "$TOOL" | cut -f1)
-    INPUT_SIZE=$(echo "$TOOL" | cut -f2)
-    OUTPUT_SIZE=$(echo "$TOOL" | cut -f3)
-else
-    # Fallback: rough extraction without Python.
+# Fallback if Python parsing failed
+if [ -z "$TOOL_NAME" ] || [ "$TOOL_NAME" = "unknown" ]; then
     TOOL_NAME=$(echo "$PAYLOAD" | sed -n 's/.*"tool_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
-    [ -z "$TOOL_NAME" ] && TOOL_NAME=$(echo "$PAYLOAD" | sed -n 's/.*"tool"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
+    [ -z "$TOOL_NAME" ] && TOOL_NAME="unknown"
     INPUT_SIZE=${#PAYLOAD}
     OUTPUT_SIZE=0
+    OUTPUT_TEXT=""
 fi
 
-# Session ID: prefer env var, fall back to date-based ID.
 SESSION_ID="${CLAUDE_SESSION_ID:-$(date +%Y%m%d-%H%M)}"
-
-# Model: prefer env var, default to sonnet.
 MODEL="${CLAUDE_MODEL:-sonnet}"
-
-# Timestamp in ISO 8601.
 TS=$(date -u +"%Y-%m-%dT%H:%M:%S" 2>/dev/null || date +"%Y-%m-%dT%H:%M:%S")
 
-# Append one JSONL line. Use a single atomic write to avoid corruption.
-LINE="{\"ts\":\"${TS}\",\"tool\":\"${TOOL_NAME}\",\"input_size\":${INPUT_SIZE:-0},\"output_size\":${OUTPUT_SIZE:-0},\"session\":\"${SESSION_ID}\",\"model\":\"${MODEL}\",\"event\":\"tool_use\"}"
+# Build JSONL line -- include output_text for error detection
+if [ -n "$OUTPUT_TEXT" ]; then
+    # Escape quotes in output_text for JSON
+    SAFE_TEXT=$(echo "$OUTPUT_TEXT" | sed 's/"/\\"/g' | tr '\n' ' ' | head -c 200)
+    LINE="{\"ts\":\"${TS}\",\"tool\":\"${TOOL_NAME}\",\"input_size\":${INPUT_SIZE:-0},\"output_size\":${OUTPUT_SIZE:-0},\"session\":\"${SESSION_ID}\",\"model\":\"${MODEL}\",\"event\":\"tool_use\",\"output_text\":\"${SAFE_TEXT}\"}"
+else
+    LINE="{\"ts\":\"${TS}\",\"tool\":\"${TOOL_NAME}\",\"input_size\":${INPUT_SIZE:-0},\"output_size\":${OUTPUT_SIZE:-0},\"session\":\"${SESSION_ID}\",\"model\":\"${MODEL}\",\"event\":\"tool_use\"}"
+fi
 
 echo "$LINE" >> "$LOG_FILE" 2>/dev/null || true
-
 exit 0
