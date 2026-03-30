@@ -72,6 +72,41 @@ def dashboard() -> None:
 
 
 @main.command()
+@click.option("--compact", "-c", is_flag=True, help="Single-line mode (for status bars)")
+@click.option("--interval", "-i", default=1.0, help="Update interval in seconds")
+def ticker(compact: bool, interval: float) -> None:
+    """Live cost ticker (real-time, runs alongside your tools).
+
+    \b
+    Run in a split terminal pane next to Claude Code, Cursor, etc:
+        spent ticker              # compact widget
+        spent ticker --compact    # single-line mode for status bars
+    """
+    from .ticker import run_ticker
+    run_ticker(compact=compact, interval=interval)
+
+
+@main.command()
+@click.option("--interval", "-i", default=2.0, help="Update interval in seconds")
+def panel(interval: float) -> None:
+    """Live cost panel widget (compact, for side panes).
+
+    \b
+    Perfect for a narrow terminal pane:
+        spent panel
+    """
+    from .ticker import run_panel
+    run_panel(interval=interval)
+
+
+@main.command()
+def status() -> None:
+    """Print a single-line cost status (for scripts and integrations)."""
+    from .ticker import get_statusline
+    click.echo(get_statusline())
+
+
+@main.command()
 @click.option("--session", "-s", default=None, help="Show specific session")
 @click.option("--today", is_flag=True, help="Show today's costs")
 @click.option("--json-output", "--json", "as_json", is_flag=True, help="Output as JSON")
@@ -151,6 +186,25 @@ def report(
                     f"{s['session_id']}  {s['started'][:19]}  "
                     f"{s['calls']} calls  {tokens:,} tokens  ${s['total_cost']:.4f}"
                 )
+
+
+@main.group()
+def setup() -> None:
+    """Set up integrations with AI coding tools."""
+    pass
+
+
+@setup.command("claude-code")
+def setup_claude_code() -> None:
+    """Integrate spent with Claude Code (statusline + hooks).
+
+    \b
+    Adds a cost ticker to Claude Code's status bar and
+    configures hooks for post-tool-use cost reporting.
+    """
+    from .integrations.claude_code import setup_statusline
+    setup_statusline()
+    click.echo("\nDone! Restart Claude Code to see the cost ticker.")
 
 
 @main.command()
