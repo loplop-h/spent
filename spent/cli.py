@@ -15,10 +15,173 @@ from .storage import Storage
 @click.group(invoke_without_command=True)
 @click.pass_context
 def main(ctx: click.Context) -> None:
-    """spent -- see what your AI really costs."""
+    """spent -- Claude Code session cost tracker."""
     if ctx.invoked_subcommand is None:
         click.echo(ctx.get_help())
 
+
+# ─── Claude Code commands ─────────────────────────────────────────────
+
+@main.group()
+def cc() -> None:
+    """Claude Code session tracking."""
+    pass
+
+
+@cc.command("status")
+def cc_status() -> None:
+    """Show current Claude Code session costs."""
+    from .claude_tracker import ClaudeTracker
+    tracker = ClaudeTracker()
+    session = tracker.get_current_session()
+
+    if not session or session["tool_uses"] == 0:
+        click.echo("No session data yet. Run: spent cc setup")
+        return
+
+    eff = session.get("efficiency", {})
+    total = session["total_cost"]
+    productive = eff.get("productive", 0)
+    wasted = eff.get("wasted", 0)
+    neutral = eff.get("neutral", 0)
+    score = int((productive / total * 100) if total > 0 else 100)
+
+    try:
+        from rich.console import Console
+        from rich.panel import Panel
+
+        console = Console()
+        color = "green" if score >= 75 else "yellow" if score >= 50 else "red"
+
+        lines = [
+            f"[bold {color}]Efficiency: {score}%[/]",
+            f"[bold white]Cost:[/] ${total:.4f}",
+            f"[bold white]Tools:[/] {session['tool_uses']} uses ({session['duration_minutes']:.0f}m)",
+            "",
+            f"[green]Productive:[/] ${productive:.4f} ({productive/total*100:.0f}%)" if total > 0 else "[green]Productive:[/] $0.00",
+            f"[dim]Neutral:[/]    ${neutral:.4f} ({neutral/total*100:.0f}%)" if total > 0 else "[dim]Neutral:[/]    $0.00",
+            f"[red]Wasted:[/]     ${wasted:.4f} ({wasted/total*100:.0f}%)" if total > 0 else "[red]Wasted:[/]     $0.00",
+        ]
+        console.print(Panel("\n".join(lines), title="[bold]spent[/]", border_style="blue"))
+    except ImportError:
+        click.echo(f"Efficiency: {score}%")
+        click.echo(f"Cost: ${total:.4f}")
+        click.echo(f"Tools: {session['tool_uses']} uses")
+
+
+@cc.command("score")
+def cc_score() -> None:
+    """Show efficiency score for current session."""
+    from .claude_tracker import ClaudeTracker
+    tracker = ClaudeTracker()
+    session = tracker.get_current_session()
+    if not session or session["tool_uses"] == 0:
+        click.echo("No session data.")
+        return
+    eff = session.get("efficiency", {})
+    total = session["total_cost"]
+    productive = eff.get("productive", 0)
+    score = int((productive / total * 100) if total > 0 else 100)
+    click.echo(f"Efficiency: {score}%")
+
+
+@cc.command("on")
+def cc_on() -> None:
+    """Enable session tracking."""
+    from pathlib import Path
+    flag = Path.home() / ".spent" / "tracking_enabled"
+    flag.parent.mkdir(parents=True, exist_ok=True)
+    flag.write_text("1")
+    click.echo("Tracking ON. Every tool use is now being logged.")
+
+
+@cc.command("off")
+def cc_off() -> None:
+    """Disable session tracking."""
+    from pathlib import Path
+    flag = Path.home() / ".spent" / "tracking_enabled"
+    if flag.exists():
+        flag.write_text("0")
+    click.echo("Tracking OFF.")
+
+
+@cc.command("dashboard")
+@click.option("--port", "-p", default=5050, help="Port (default: 5050)")
+def cc_dashboard(port: int) -> None:
+    """Open the Claude Code dashboard in your browser."""
+    from .claude_web import serve
+    serve(port=port, open_browser=True)
+
+
+@cc.command("history")
+@click.option("--days", "-d", default=7, help="Number of days (default: 7)")
+def cc_history(days: int) -> None:
+    """Show past session history."""
+    from .claude_tracker import ClaudeTracker
+    tracker = ClaudeTracker()
+    sessions = tracker.get_session_history(days=days)
+
+    if not sessions:
+        click.echo("No session history yet.")
+        return
+
+    try:
+        from rich.console import Console
+        from rich.table import Table
+
+        console = Console()
+        table = Table(title=f"Sessions (last {days} days)", show_header=True, header_style="bold cyan")
+        table.add_column("Date")
+        table.add_column("Duration", justify="right")
+        table.add_column("Tools", justify="right")
+        table.add_column("Cost", justify="right", style="bold")
+        table.add_column("Efficiency", justify="right")
+
+        for s in sessions:
+            score = s.get("efficiency_score", 0)
+            color = "green" if score >= 75 else "yellow" if score >= 50 else "red"
+            table.add_row(
+                s.get("date", "?"),
+                f"{s.get('duration_minutes', 0):.0f}m",
+                str(s.get("tool_uses", 0)),
+                f"${s.get('total_cost', 0):.4f}",
+                f"[{color}]{score}%[/]",
+            )
+        console.print(table)
+    except ImportError:
+        for s in sessions:
+            click.echo(f"{s.get('date', '?')} | {s.get('tool_uses', 0)} tools | ${s.get('total_cost', 0):.4f} | {s.get('efficiency_score', 0)}%")
+
+
+@cc.command("setup")
+def cc_setup() -> None:
+    """Configure Claude Code hooks for automatic tracking."""
+    from .integrations.claude_code import setup_hooks
+    setup_hooks()
+    click.echo("Done! Tracking hooks installed. Restart Claude Code to activate.")
+
+
+@cc.command("tips")
+def cc_tips() -> None:
+    """Show efficiency tips for current session."""
+    from .claude_tracker import ClaudeTracker
+    tracker = ClaudeTracker()
+    session = tracker.get_current_session()
+
+    if not session or session["tool_uses"] == 0:
+        click.echo("No session data to analyze.")
+        return
+
+    tips = session.get("tips", [])
+    if not tips:
+        click.echo("No tips -- you're being efficient!")
+        return
+
+    for i, tip in enumerate(tips, 1):
+        click.echo(f"  {i}. {tip}")
+
+
+# ─── Legacy / generic commands ────────────────────────────────────────
 
 @main.command()
 @click.argument("command", nargs=-1, required=True)
@@ -215,11 +378,174 @@ def setup_claude_code() -> None:
 
     \b
     Adds a cost ticker to Claude Code's status bar and
-    configures hooks for post-tool-use cost reporting.
+    configures hooks for session-level cost tracking.
+        spent setup claude-code
     """
-    from .integrations.claude_code import setup_statusline
-    setup_statusline()
-    click.echo("\nDone! Restart Claude Code to see the cost ticker.")
+    from .integrations.claude_code import setup
+    setup()
+
+
+@main.command()
+@click.option("--today", is_flag=True, help="Show all sessions from today")
+@click.option("--days", "-d", default=7, help="Number of days of history (default: 7)")
+@click.option("--json-output", "--json", "as_json", is_flag=True, help="Output as JSON")
+def session(today: bool, days: int, as_json: bool) -> None:
+    """Show Claude Code session costs and efficiency.
+
+    \b
+    Examples:
+        spent session              # Current / most recent session
+        spent session --today      # All sessions from today
+        spent session --days 30    # Last 30 days of sessions
+        spent session --json       # Machine-readable output
+    """
+    from .claude_tracker import ClaudeTracker
+
+    tracker = ClaudeTracker()
+
+    if today:
+        sessions = tracker.get_today_sessions()
+        if not sessions:
+            click.echo("No Claude Code sessions tracked today.")
+            return
+        if as_json:
+            click.echo(json.dumps(sessions, indent=2, default=str))
+            return
+        _print_session_list(sessions, tracker)
+
+    elif days != 7 or not sys.stdin.isatty():
+        # Explicit --days flag or piped output: show history.
+        sessions = tracker.get_session_history(days=days)
+        if not sessions:
+            click.echo(f"No Claude Code sessions in the last {days} days.")
+            return
+        if as_json:
+            click.echo(json.dumps(sessions, indent=2, default=str))
+            return
+        _print_session_list(sessions, tracker)
+
+    else:
+        # Default: show current session.
+        data = tracker.get_current_session()
+        if not data.get("session_id"):
+            click.echo(
+                "No Claude Code sessions recorded yet.\n"
+                "Run: spent setup claude-code"
+            )
+            return
+        if as_json:
+            click.echo(json.dumps(data, indent=2, default=str))
+            return
+        _print_session_detail(data, tracker)
+
+
+def _print_session_detail(data: dict, tracker: "ClaudeTracker") -> None:
+    """Pretty-print a single session's metrics."""
+    score = tracker.get_efficiency_score(data)
+    eff = data.get("efficiency", {})
+
+    try:
+        from rich.console import Console
+        from rich.panel import Panel
+        from rich.table import Table
+
+        console = Console()
+
+        # Header.
+        score_color = "green" if score >= 70 else "yellow" if score >= 40 else "red"
+        header = (
+            f"[bold white]Session:[/]     [dim]{data['session_id']}[/]\n"
+            f"[bold white]Started:[/]     [dim]{data['started'][:19]}[/]\n"
+            f"[bold white]Duration:[/]    [dim]{data['duration_minutes']:.1f} min[/]\n"
+            f"[bold white]Total Cost:[/]  [bold]${data['total_cost']:.4f}[/]\n"
+            f"[bold white]Tool Uses:[/]   [dim]{data['tool_uses']}[/]\n"
+            f"[bold white]Tokens:[/]      [dim]{data['total_tokens']:,}[/]\n"
+            f"[bold white]Efficiency:[/]  [{score_color}]{score:.0f}/100[/]"
+        )
+        console.print(Panel(header, title="[bold]spent session[/]", border_style="blue"))
+
+        # Efficiency breakdown.
+        p = eff.get("productive", 0)
+        w = eff.get("wasted", 0)
+        n = eff.get("neutral", 0)
+        console.print(
+            f"  [green]Productive: ${p:.4f}[/]  "
+            f"[dim]Neutral: ${n:.4f}[/]  "
+            f"[red]Wasted: ${w:.4f}[/]"
+        )
+        console.print()
+
+        # Tool breakdown table.
+        by_tool = data.get("by_tool", {})
+        if by_tool:
+            table = Table(show_header=True, header_style="bold cyan", box=None, padding=(0, 2))
+            table.add_column("Tool", style="white")
+            table.add_column("Uses", justify="right", style="dim")
+            table.add_column("Cost", justify="right", style="bold")
+            for tool_name, info in by_tool.items():
+                table.add_row(tool_name, str(info["count"]), f"${info['cost']:.4f}")
+            console.print(table)
+
+    except ImportError:
+        click.echo(f"Session: {data['session_id']}")
+        click.echo(f"Started: {data['started'][:19]}")
+        click.echo(f"Duration: {data['duration_minutes']:.1f} min")
+        click.echo(f"Cost: ${data['total_cost']:.4f}")
+        click.echo(f"Tool uses: {data['tool_uses']}")
+        click.echo(f"Efficiency: {score:.0f}/100")
+        click.echo(
+            f"  Productive: ${eff.get('productive', 0):.4f}  "
+            f"Neutral: ${eff.get('neutral', 0):.4f}  "
+            f"Wasted: ${eff.get('wasted', 0):.4f}"
+        )
+        for tool_name, info in data.get("by_tool", {}).items():
+            click.echo(f"  {tool_name}: {info['count']} uses, ${info['cost']:.4f}")
+
+
+def _print_session_list(sessions: list[dict], tracker: "ClaudeTracker") -> None:
+    """Pretty-print a list of session summaries."""
+    try:
+        from rich.console import Console
+        from rich.table import Table
+
+        console = Console()
+        table = Table(
+            title="Claude Code Sessions",
+            show_header=True,
+            header_style="bold cyan",
+        )
+        table.add_column("Session", style="dim")
+        table.add_column("Started")
+        table.add_column("Duration", justify="right")
+        table.add_column("Tools", justify="right")
+        table.add_column("Cost", justify="right", style="bold")
+        table.add_column("Score", justify="right")
+
+        total_cost = 0.0
+        for s in sessions:
+            score = tracker.get_efficiency_score(s)
+            score_color = "green" if score >= 70 else "yellow" if score >= 40 else "red"
+            table.add_row(
+                s["session_id"],
+                s["started"][:19],
+                f"{s['duration_minutes']:.0f}m",
+                str(s["tool_uses"]),
+                f"${s['total_cost']:.4f}",
+                f"[{score_color}]{score:.0f}[/]",
+            )
+            total_cost += s["total_cost"]
+
+        console.print(table)
+        console.print(f"\n[bold]Total: ${total_cost:.4f} across {len(sessions)} sessions[/]")
+
+    except ImportError:
+        for s in sessions:
+            score = tracker.get_efficiency_score(s)
+            click.echo(
+                f"{s['session_id']}  {s['started'][:19]}  "
+                f"{s['duration_minutes']:.0f}m  {s['tool_uses']} tools  "
+                f"${s['total_cost']:.4f}  score:{score:.0f}"
+            )
 
 
 @main.command()
