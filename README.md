@@ -7,7 +7,7 @@
   <a href="https://pypi.org/project/spent/"><img src="https://img.shields.io/pypi/v/spent?style=flat-square" alt="PyPI"></a>
   <a href="https://pypi.org/project/spent/"><img src="https://img.shields.io/pypi/pyversions/spent?style=flat-square" alt="Python"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License"></a>
-  <a href="https://github.com/maxhu/spent/stargazers"><img src="https://img.shields.io/github/stars/maxhu/spent?style=flat-square" alt="Stars"></a>
+  <a href="https://github.com/loplop-h/spent/stargazers"><img src="https://img.shields.io/github/stars/maxhu/spent?style=flat-square" alt="Stars"></a>
 </p>
 
 ---
@@ -192,7 +192,7 @@ When the budget is exceeded:
 Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ```bash
-git clone https://github.com/maxhu/spent.git
+git clone https://github.com/loplop-h/spent.git
 cd spent
 pip install -e ".[dev]"
 pytest

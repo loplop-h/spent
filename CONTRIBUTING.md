@@ -5,7 +5,7 @@ Thanks for your interest in contributing!
 ## Setup
 
 ```bash
-git clone https://github.com/maxhu/spent.git
+git clone https://github.com/loplop-h/spent.git
 cd spent
 pip install -e ".[dev]"
 ```

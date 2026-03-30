@@ -48,9 +48,9 @@ dev = [
 spent = "spent.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/maxhu/spent"
-Repository = "https://github.com/maxhu/spent"
-Issues = "https://github.com/maxhu/spent/issues"
+Homepage = "https://github.com/loplop-h/spent"
+Repository = "https://github.com/loplop-h/spent"
+Issues = "https://github.com/loplop-h/spent/issues"
 
 [tool.ruff]
 target-version = "py39"
