@@ -60,6 +60,9 @@ class ToolEvent:
     session: str
     model: str
     event: str  # "tool_use", "session_start", "session_end"
+    has_error: bool = False
+    file_path: str = ""
+    output_text: str = ""
 
     @staticmethod
     def from_line(line: str) -> ToolEvent | None:
@@ -74,6 +77,9 @@ class ToolEvent:
                 session=d.get("session", ""),
                 model=d.get("model", "sonnet"),
                 event=d.get("event", "tool_use"),
+                has_error=bool(d.get("has_error", False)),
+                file_path=d.get("file_path", ""),
+                output_text=d.get("output_text", ""),
             )
         except (json.JSONDecodeError, TypeError, ValueError):
             return None
@@ -344,13 +350,15 @@ class ClaudeTracker:
         if event_time is None:
             return False
 
-        # Look backwards for another Read with similar input_size (proxy for
-        # same file -- we don't have file paths in the minimal log format).
         for prev_idx in range(index - 1, max(index - 10, -1), -1):
             prev = all_events[prev_idx]
             if prev.tool != "Read":
                 continue
-            if prev.input_size != event.input_size:
+            # Use file_path if available, fall back to input_size matching
+            if event.file_path and prev.file_path:
+                if event.file_path != prev.file_path:
+                    continue
+            elif prev.input_size != event.input_size:
                 continue
             prev_time = self._parse_ts(prev.ts)
             if prev_time is None:
@@ -375,6 +383,10 @@ class ClaudeTracker:
             prev = all_events[prev_idx]
             if prev.tool != "Edit":
                 continue
+            # Use file_path if available
+            if event.file_path and prev.file_path:
+                if event.file_path != prev.file_path:
+                    continue
             prev_time = self._parse_ts(prev.ts)
             if prev_time is None:
                 continue
@@ -385,10 +397,16 @@ class ClaudeTracker:
 
     @staticmethod
     def _looks_like_error(event: ToolEvent) -> bool:
-        """Heuristic: large output with small input often means error trace."""
-        # If output is much larger than input, likely an error dump.
-        # This is a rough heuristic since we only have sizes.
-        if event.output_size > 2000 and event.input_size < 200:
+        """Detect errors using has_error flag and output text analysis."""
+        # Direct flag from hook (parsed from stderr / tool_response)
+        if event.has_error:
+            return True
+        # Check output text for error keywords
+        text = event.output_text.lower()
+        if any(kw in text for kw in (
+            "error", "traceback", "failed", "exception",
+            "command not found", "permission denied", "no such file",
+        )):
             return True
         return False
 

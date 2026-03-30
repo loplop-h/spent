@@ -1,71 +1,93 @@
 #!/usr/bin/env bash
 # spent -- PostToolUse hook for Claude Code session tracking.
-# Appends one JSONL line per tool invocation to ~/.spent/claude-sessions.jsonl.
-# Designed to be FAST (<50ms). Exit silently on any error.
+# Receives REAL Claude Code hook payload via stdin with:
+#   session_id, tool_name, tool_input, tool_response, cwd
+# Appends one JSONL line to ~/.spent/claude-sessions.jsonl
 
 SPENT_DIR="$HOME/.spent"
 LOG_FILE="$SPENT_DIR/claude-sessions.jsonl"
+ENABLED_FLAG="$SPENT_DIR/tracking_enabled"
 mkdir -p "$SPENT_DIR" 2>/dev/null || true
 
-# Read payload from stdin (Claude Code pipes JSON here).
+# Check if tracking is disabled
+[ -f "$ENABLED_FLAG" ] && [ "$(cat "$ENABLED_FLAG" 2>/dev/null)" = "0" ] && exit 0
+
+# Read the hook payload from stdin
 PAYLOAD=$(cat 2>/dev/null) || true
 [ -z "$PAYLOAD" ] && exit 0
 
-# Find a working Python (test it actually runs, not just exists).
+# Find working Python
 PY=""
-if python3 -c "pass" >/dev/null 2>&1; then
-    PY="python3"
-elif python -c "pass" >/dev/null 2>&1; then
-    PY="python"
+if python3 -c "pass" >/dev/null 2>&1; then PY="python3"
+elif python -c "pass" >/dev/null 2>&1; then PY="python"
 fi
-
-TOOL_NAME=""
-INPUT_SIZE=0
-OUTPUT_SIZE=0
 
 if [ -n "$PY" ]; then
-    PARSED=$(printf '%s' "$PAYLOAD" | $PY -c "
+    printf '%s' "$PAYLOAD" | $PY -c "
 import sys, json
+
 try:
     d = json.loads(sys.stdin.read())
-    t = d.get('tool_name', d.get('tool', 'unknown'))
-    inp = len(json.dumps(d.get('tool_input', d.get('input', ''))))
-    out = len(json.dumps(d.get('tool_output', d.get('output', ''))))
-    out_text = str(d.get('tool_output', d.get('output', '')))[:200]
-    print(f'{t}\t{inp}\t{out}\t{out_text}')
+
+    tool = d.get('tool_name', 'unknown')
+    session = d.get('session_id', 'unknown')
+
+    # Measure actual input/output sizes
+    tool_input = d.get('tool_input', {})
+    tool_response = d.get('tool_response', {})
+
+    input_size = len(json.dumps(tool_input))
+
+    # Extract output -- handle different tool response formats
+    stdout = tool_response.get('stdout', '') if isinstance(tool_response, dict) else str(tool_response)
+    stderr = tool_response.get('stderr', '') if isinstance(tool_response, dict) else ''
+    output_size = len(str(stdout)) + len(str(stderr))
+
+    # Build output text for error detection (first 300 chars)
+    output_text = str(stdout)[:200]
+    if stderr:
+        output_text = str(stderr)[:200]
+
+    # Detect errors
+    has_error = False
+    if isinstance(tool_response, dict):
+        has_error = bool(stderr) or tool_response.get('interrupted', False)
+    if not has_error and any(kw in output_text.lower() for kw in ['error', 'traceback', 'failed', 'exception', 'command not found']):
+        has_error = True
+
+    # Get file path if available (for duplicate read detection)
+    file_path = ''
+    if isinstance(tool_input, dict):
+        file_path = tool_input.get('file_path', tool_input.get('path', tool_input.get('command', '')))
+
+    # ISO timestamp
+    from datetime import datetime, timezone
+    ts = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S')
+
+    record = {
+        'ts': ts,
+        'event': 'tool_use',
+        'session': session[:16],
+        'tool': tool,
+        'input_size': input_size,
+        'output_size': output_size,
+        'has_error': has_error,
+        'file_path': str(file_path)[:200],
+        'output_text': output_text.replace('\"', \"'\").replace('\n', ' ')[:200],
+    }
+
+    line = json.dumps(record, ensure_ascii=False)
+
+    with open('$SPENT_DIR/claude-sessions.jsonl'.replace('$SPENT_DIR', '$HOME/.spent'), 'a') as f:
+        f.write(line + '\n')
+
 except Exception:
-    print('unknown\t0\t0\t')
-" 2>/dev/null) || true
-
-    if [ -n "$PARSED" ]; then
-        TOOL_NAME=$(echo "$PARSED" | cut -f1)
-        INPUT_SIZE=$(echo "$PARSED" | cut -f2)
-        OUTPUT_SIZE=$(echo "$PARSED" | cut -f3)
-        OUTPUT_TEXT=$(echo "$PARSED" | cut -f4)
-    fi
-fi
-
-# Fallback if Python parsing failed
-if [ -z "$TOOL_NAME" ] || [ "$TOOL_NAME" = "unknown" ]; then
-    TOOL_NAME=$(echo "$PAYLOAD" | sed -n 's/.*"tool_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
-    [ -z "$TOOL_NAME" ] && TOOL_NAME="unknown"
-    INPUT_SIZE=${#PAYLOAD}
-    OUTPUT_SIZE=0
-    OUTPUT_TEXT=""
-fi
-
-SESSION_ID="${CLAUDE_SESSION_ID:-$(date +%Y%m%d-%H%M)}"
-MODEL="${CLAUDE_MODEL:-sonnet}"
-TS=$(date -u +"%Y-%m-%dT%H:%M:%S" 2>/dev/null || date +"%Y-%m-%dT%H:%M:%S")
-
-# Build JSONL line -- include output_text for error detection
-if [ -n "$OUTPUT_TEXT" ]; then
-    # Escape quotes in output_text for JSON
-    SAFE_TEXT=$(echo "$OUTPUT_TEXT" | sed 's/"/\\"/g' | tr '\n' ' ' | head -c 200)
-    LINE="{\"ts\":\"${TS}\",\"tool\":\"${TOOL_NAME}\",\"input_size\":${INPUT_SIZE:-0},\"output_size\":${OUTPUT_SIZE:-0},\"session\":\"${SESSION_ID}\",\"model\":\"${MODEL}\",\"event\":\"tool_use\",\"output_text\":\"${SAFE_TEXT}\"}"
+    pass
+" 2>/dev/null
 else
-    LINE="{\"ts\":\"${TS}\",\"tool\":\"${TOOL_NAME}\",\"input_size\":${INPUT_SIZE:-0},\"output_size\":${OUTPUT_SIZE:-0},\"session\":\"${SESSION_ID}\",\"model\":\"${MODEL}\",\"event\":\"tool_use\"}"
+    # Fallback without Python -- minimal logging
+    TS=\$(date -u +'%Y-%m-%dT%H:%M:%S' 2>/dev/null || date +'%Y-%m-%dT%H:%M:%S')
+    echo \"{\\\"ts\\\":\\\"$TS\\\",\\\"event\\\":\\\"tool_use\\\",\\\"tool\\\":\\\"unknown\\\",\\\"input_size\\\":0,\\\"output_size\\\":0,\\\"session\\\":\\\"unknown\\\"}\" >> \"\$LOG_FILE\" 2>/dev/null
 fi
 
-echo "$LINE" >> "$LOG_FILE" 2>/dev/null || true
 exit 0
