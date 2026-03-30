@@ -51,9 +51,10 @@ def setup_hooks() -> None:
         )
         return
 
-    track_script = str(hooks_dir / "track-tool-use.sh")
-    start_script = str(hooks_dir / "session-start.sh")
-    end_script = str(hooks_dir / "session-end.sh")
+    # Use POSIX paths in commands (Git Bash on Windows needs forward slashes)
+    track_script = (hooks_dir / "track-tool-use.sh").as_posix()
+    start_script = (hooks_dir / "session-start.sh").as_posix()
+    end_script = (hooks_dir / "session-end.sh").as_posix()
 
     # PostToolUse -- track every tool invocation.
     hooks = _merge_hook(

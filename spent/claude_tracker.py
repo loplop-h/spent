@@ -3,49 +3,21 @@
 Reads the JSONL hook log (~/.spent/claude-sessions.jsonl) and computes
 session metrics -- costs, efficiency, tool breakdown -- without any
 external API calls. All estimation is done locally from character counts.
+
+Delegates cost estimation, event classification, efficiency scoring,
+and tip generation to the shared cost_engine module.
 """
 
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-
-# -- Immutable configuration -------------------------------------------------
-
-@dataclass(frozen=True)
-class ModelPricing:
-    """Per-1M-token pricing for a model family."""
-    input_usd: float
-    output_usd: float
-
-
-# Claude Code model pricing (per 1M tokens).
-MODEL_PRICING: dict[str, ModelPricing] = {
-    "opus": ModelPricing(input_usd=15.00, output_usd=75.00),
-    "sonnet": ModelPricing(input_usd=3.00, output_usd=15.00),
-    "haiku": ModelPricing(input_usd=0.80, output_usd=4.00),
-}
-
-# Rough token estimation: ~4 characters = 1 token.
-CHARS_PER_TOKEN = 4
-
-# Tools classified by productivity status.
-PRODUCTIVE_TOOLS = frozenset({
-    "Edit", "Write", "MultiEdit", "Agent",
-})
-
-NEUTRAL_TOOLS = frozenset({
-    "Read", "Grep", "Glob", "TodoRead", "TodoWrite",
-    "TaskCreate", "TaskUpdate", "TaskStatus",
-    "ToolSearch", "WebSearch", "WebFetch",
-})
-
-# Everything else defaults to context-dependent classification.
-# Bash is classified by exit code. Repeated Reads are classified as wasted.
+from . import cost_engine
+from .cost_engine import EventData
 
 
 # -- Data types --------------------------------------------------------------
@@ -69,6 +41,8 @@ class ToolEvent:
         """Parse one JSONL line. Returns None on invalid input."""
         try:
             d = json.loads(line)
+            if not isinstance(d, dict):
+                return None
             return ToolEvent(
                 ts=d.get("ts", ""),
                 tool=d.get("tool", ""),
@@ -83,6 +57,18 @@ class ToolEvent:
             )
         except (json.JSONDecodeError, TypeError, ValueError):
             return None
+
+    def to_event_data(self) -> EventData:
+        """Convert to the cost_engine EventData for classification."""
+        return EventData(
+            tool=self.tool,
+            ts=self.ts,
+            has_error=self.has_error,
+            output_text=self.output_text,
+            file_path=self.file_path,
+            input_size=self.input_size,
+            output_size=self.output_size,
+        )
 
 
 @dataclass
@@ -111,7 +97,7 @@ class ClaudeTracker:
 
     def get_current_session(self) -> dict[str, Any]:
         """Get metrics for the most recent session."""
-        events = self._read_events()
+        events = self._read_events_tail(max_lines=5000)
         if not events:
             return self._empty_session()
 
@@ -138,23 +124,14 @@ class ClaudeTracker:
     def get_efficiency_score(self, session: dict[str, Any]) -> float:
         """Calculate a 0-100 efficiency score for a session.
 
-        Scoring:
-        - 100% productive tool use = 100
-        - High neutral (search/read) = moderate score
-        - High wasted (errors, re-edits) = low score
+        Delegates to cost_engine.compute_efficiency_score().
         """
         eff = session.get("efficiency", {})
-        productive = eff.get("productive", 0.0)
-        wasted = eff.get("wasted", 0.0)
-        neutral = eff.get("neutral", 0.0)
-
-        total = productive + wasted + neutral
-        if total == 0:
-            return 0.0
-
-        # Weighted formula: productive=1.0, neutral=0.5, wasted=0.0
-        score = ((productive * 1.0) + (neutral * 0.5) + (wasted * 0.0)) / total
-        return round(score * 100, 1)
+        return cost_engine.compute_efficiency_score(
+            productive_cost=eff.get("productive", 0.0),
+            neutral_cost=eff.get("neutral", 0.0),
+            wasted_cost=eff.get("wasted", 0.0),
+        )
 
     # -- Internal: event I/O -------------------------------------------------
 
@@ -175,6 +152,50 @@ class ClaudeTracker:
                         events.append(event)
         except OSError:
             return []
+
+        return events
+
+    def _read_events_tail(self, max_lines: int = 5000) -> list[ToolEvent]:
+        """Read the last N lines from the JSONL log for fast tail access.
+
+        Falls back to reading the entire file if it has fewer lines.
+        """
+        if not self._log_path.exists():
+            return []
+
+        try:
+            with open(self._log_path, "rb") as f:
+                # Seek to the end to get file size.
+                f.seek(0, 2)
+                file_size = f.tell()
+
+                if file_size == 0:
+                    return []
+
+                # Estimate bytes per line (~300 avg for JSONL events).
+                # Read more than needed to ensure we get max_lines.
+                chunk_size = min(file_size, max_lines * 400)
+                f.seek(max(0, file_size - chunk_size))
+
+                # If we didn't seek to the start, skip the first partial line.
+                if f.tell() > 0:
+                    f.readline()
+
+                raw_lines = f.read().decode("utf-8", errors="replace").splitlines()
+        except OSError:
+            return []
+
+        # Take only the last max_lines.
+        tail_lines = raw_lines[-max_lines:] if len(raw_lines) > max_lines else raw_lines
+
+        events: list[ToolEvent] = []
+        for line in tail_lines:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            event = ToolEvent.from_line(stripped)
+            if event is not None:
+                events.append(event)
 
         return events
 
@@ -204,6 +225,9 @@ class ClaudeTracker:
         ended = events[-1].ts
         duration_minutes = self._duration_minutes(started, ended)
 
+        # Convert ToolEvents to EventData for classification.
+        event_data_list = [te.to_event_data() for te in tool_events]
+
         # Cost calculation.
         total_cost = 0.0
         total_input_tokens = 0
@@ -212,8 +236,11 @@ class ClaudeTracker:
         timeline: list[dict[str, Any]] = []
 
         for turn_number, event in enumerate(tool_events):
-            input_tokens, output_tokens, cost = self._estimate_cost(
-                event, turn_number
+            input_tokens, output_tokens, cost = cost_engine.estimate_cost(
+                input_size=event.input_size,
+                output_size=event.output_size,
+                turn_number=turn_number,
+                model=event.model,
             )
             total_cost += cost
             total_input_tokens += input_tokens
@@ -226,14 +253,19 @@ class ClaudeTracker:
             stats.input_tokens += input_tokens
             stats.output_tokens += output_tokens
 
-            # Classify productivity.
-            status = self._classify_event(event, turn_number, tool_events)
+            # Classify productivity via cost_engine.
+            status = cost_engine.classify_event(
+                event=event_data_list[turn_number],
+                index=turn_number,
+                all_events=event_data_list,
+            )
 
             timeline.append({
                 "ts": event.ts,
                 "tool": event.tool,
                 "cost": round(cost, 6),
                 "status": status,
+                "file_path": event.file_path,
             })
 
         # Efficiency breakdown.
@@ -252,9 +284,21 @@ class ClaudeTracker:
             for name, s in sorted(by_tool.items(), key=lambda x: x[1].cost, reverse=True)
         }
 
+        # Efficiency score and tips.
+        efficiency_score = cost_engine.compute_efficiency_score(
+            productive_cost=productive_cost,
+            neutral_cost=neutral_cost,
+            wasted_cost=wasted_cost,
+        )
+        tips = self._generate_tips(by_tool_dict, total_cost, wasted_cost, timeline)
+
+        # Derive date from started timestamp.
+        date = started[:10] if len(started) >= 10 else ""
+
         return {
             "session_id": session_id,
             "started": started,
+            "date": date,
             "duration_minutes": round(duration_minutes, 1),
             "total_cost": round(total_cost, 6),
             "total_tokens": total_input_tokens + total_output_tokens,
@@ -265,160 +309,29 @@ class ClaudeTracker:
                 "wasted": round(wasted_cost, 6),
                 "neutral": round(neutral_cost, 6),
             },
+            "efficiency_score": efficiency_score,
+            "tips": tips,
             "timeline": timeline,
         }
 
-    # -- Internal: cost estimation -------------------------------------------
-
-    def _estimate_cost(
-        self, event: ToolEvent, turn_number: int
-    ) -> tuple[int, int, float]:
-        """Estimate tokens and cost for a single tool use.
-
-        Claude Code's real token usage includes system prompt, growing
-        conversation context, and tool definitions. We model this as:
-          input_tokens = max(char_input / 4, 500) + context_overhead
-          output_tokens = char_output / 4
-          context_overhead = 500 + (turn_number * 200)
-
-        Returns (input_tokens, output_tokens, cost_usd).
-        """
-        raw_input = max(event.input_size // CHARS_PER_TOKEN, 500)
-        context_overhead = 500 + (turn_number * 200)
-        input_tokens = raw_input + context_overhead
-        output_tokens = max(event.output_size // CHARS_PER_TOKEN, 50)
-
-        pricing = MODEL_PRICING.get(event.model, MODEL_PRICING["sonnet"])
-        input_cost = (input_tokens / 1_000_000) * pricing.input_usd
-        output_cost = (output_tokens / 1_000_000) * pricing.output_usd
-        cost = input_cost + output_cost
-
-        return (input_tokens, output_tokens, cost)
-
-    # -- Internal: productivity classification -------------------------------
-
-    def _classify_event(
-        self,
-        event: ToolEvent,
-        index: int,
-        all_events: list[ToolEvent],
-    ) -> str:
-        """Classify a tool use as productive, neutral, or wasted.
-
-        Rules:
-        - PRODUCTIVE: Edit/Write (code written), Agent (delegation),
-          Bash with no error indicators.
-        - NEUTRAL: Read, Grep, Glob (information gathering).
-        - WASTED: Repeated Read of same file within 60s, Edit of same
-          file within 30s of another Edit (revision/fix), Bash with
-          error indicators.
-        """
-        tool = event.tool
-
-        # Check for wasted patterns first (overrides default classification).
-        if tool == "Read" and self._is_repeated_read(event, index, all_events):
-            return "wasted"
-
-        if tool == "Edit" and self._is_rapid_re_edit(event, index, all_events):
-            return "wasted"
-
-        if tool == "Bash" and self._looks_like_error(event):
-            return "wasted"
-
-        # Default classification by tool type.
-        if tool in PRODUCTIVE_TOOLS:
-            return "productive"
-
-        if tool in NEUTRAL_TOOLS:
-            return "neutral"
-
-        # Bash without error indicators is productive.
-        if tool == "Bash":
-            return "productive"
-
-        # Unknown tools default to neutral.
-        return "neutral"
-
-    def _is_repeated_read(
-        self, event: ToolEvent, index: int, all_events: list[ToolEvent]
-    ) -> bool:
-        """Check if this Read targets the same file as a recent Read (<60s)."""
-        if event.tool != "Read":
-            return False
-
-        event_time = self._parse_ts(event.ts)
-        if event_time is None:
-            return False
-
-        for prev_idx in range(index - 1, max(index - 10, -1), -1):
-            prev = all_events[prev_idx]
-            if prev.tool != "Read":
-                continue
-            # Use file_path if available, fall back to input_size matching
-            if event.file_path and prev.file_path:
-                if event.file_path != prev.file_path:
-                    continue
-            elif prev.input_size != event.input_size:
-                continue
-            prev_time = self._parse_ts(prev.ts)
-            if prev_time is None:
-                continue
-            if (event_time - prev_time).total_seconds() < 60:
-                return True
-
-        return False
-
-    def _is_rapid_re_edit(
-        self, event: ToolEvent, index: int, all_events: list[ToolEvent]
-    ) -> bool:
-        """Check if this Edit follows another Edit of same file within 30s."""
-        if event.tool != "Edit":
-            return False
-
-        event_time = self._parse_ts(event.ts)
-        if event_time is None:
-            return False
-
-        for prev_idx in range(index - 1, max(index - 5, -1), -1):
-            prev = all_events[prev_idx]
-            if prev.tool != "Edit":
-                continue
-            # Use file_path if available
-            if event.file_path and prev.file_path:
-                if event.file_path != prev.file_path:
-                    continue
-            prev_time = self._parse_ts(prev.ts)
-            if prev_time is None:
-                continue
-            if (event_time - prev_time).total_seconds() < 30:
-                return True
-
-        return False
+    # -- Internal: tips generation -------------------------------------------
 
     @staticmethod
-    def _looks_like_error(event: ToolEvent) -> bool:
-        """Detect errors using has_error flag and output text analysis."""
-        # Direct flag from hook (parsed from stderr / tool_response)
-        if event.has_error:
-            return True
-        # Check output text for error keywords
-        text = event.output_text.lower()
-        if any(kw in text for kw in (
-            "error", "traceback", "failed", "exception",
-            "command not found", "permission denied", "no such file",
-        )):
-            return True
-        return False
+    def _generate_tips(
+        by_tool: dict[str, dict],
+        total_cost: float,
+        wasted_cost: float,
+        timeline: list[dict[str, Any]],
+    ) -> list[str]:
+        """Delegate tip generation to cost_engine."""
+        return cost_engine.generate_tips(
+            by_tool=by_tool,
+            total_cost=total_cost,
+            wasted_cost=wasted_cost,
+            timeline=timeline,
+        )
 
     # -- Internal: time helpers ----------------------------------------------
-
-    @staticmethod
-    def _parse_ts(ts: str) -> datetime | None:
-        """Parse an ISO 8601 timestamp string."""
-        try:
-            return datetime.fromisoformat(ts)
-        except (ValueError, TypeError):
-            return None
 
     @staticmethod
     def _duration_minutes(start: str, end: str) -> float:
@@ -436,6 +349,7 @@ class ClaudeTracker:
         return {
             "session_id": "",
             "started": "",
+            "date": "",
             "duration_minutes": 0.0,
             "total_cost": 0.0,
             "total_tokens": 0,
@@ -446,5 +360,7 @@ class ClaudeTracker:
                 "wasted": 0.0,
                 "neutral": 0.0,
             },
+            "efficiency_score": 0.0,
+            "tips": [],
             "timeline": [],
         }
