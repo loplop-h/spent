@@ -133,7 +133,7 @@ class Tracker:
 
         return {
             "session_id": self.session_id,
-            "total_cost": round(total_cost, 4),
+            "total_cost": round(total_cost, 6),
             "total_input_tokens": total_input,
             "total_output_tokens": total_output,
             "total_tokens": total_input + total_output,
