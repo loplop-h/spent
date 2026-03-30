@@ -18,13 +18,13 @@ You use Claude Code every day. Do you know how much each session costs? Which to
 **spent** tracks every tool use, classifies it as productive, neutral, or wasted, and gives you an efficiency score. No API keys. No external services. Everything runs locally from Claude Code's own hook system.
 
 <p align="center">
-  <img src="docs/tui-screenshot.png" alt="spent TUI dashboard" width="600">
+  <img src="https://raw.githubusercontent.com/loplop-h/spent/master/docs/tui-screenshot.png" alt="spent TUI dashboard" width="600">
 </p>
 
 <details>
 <summary><strong>Web dashboard</strong></summary>
 <p align="center">
-  <img src="docs/web-dashboard.png" alt="spent web dashboard" width="700">
+  <img src="https://raw.githubusercontent.com/loplop-h/spent/master/docs/web-dashboard.png" alt="spent web dashboard" width="700">
 </p>
 </details>
 
