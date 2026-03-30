@@ -25,24 +25,30 @@ def main(ctx: click.Context) -> None:
 @click.option("--budget", "-b", type=float, default=None, help="Budget alert threshold (USD)")
 @click.option("--quiet", "-q", is_flag=True, help="Suppress the cost summary on exit")
 @click.option("--tag", "-t", multiple=True, help="Tag this session (e.g. --tag experiment-1)")
-def run(command: tuple[str, ...], budget: float | None, quiet: bool, tag: tuple[str, ...]) -> None:
+@click.option("--optimize", "-o", is_flag=True, help="Auto-route simple tasks to cheaper models")
+def run(command: tuple[str, ...], budget: float | None, quiet: bool, tag: tuple[str, ...], optimize: bool) -> None:
     """Run a command and track all LLM API costs.
 
     \b
     Examples:
         spent run python app.py
         spent run --budget 5.00 python train.py
+        spent run --optimize python app.py    # auto-route to cheaper models
         spent run --tag experiment-1 python eval.py
     """
     # Prepare the tracker before importing user code
     from .tracker import Tracker
     from .patches import apply_all
+    from .router import Router
 
     tracker = Tracker.get()
     tracker.quiet = quiet
 
     if budget is not None:
         tracker.set_budget(budget)
+
+    router = Router.get()
+    router.enabled = optimize
 
     # Apply patches to intercept SDK calls
     apply_all()

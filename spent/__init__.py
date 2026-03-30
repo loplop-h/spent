@@ -15,7 +15,7 @@ from __future__ import annotations
 __version__ = "0.1.0"
 
 
-def track(client, *, budget: float | None = None):
+def track(client, *, budget: float | None = None, optimize: bool = False):
     """Wrap an LLM client to track all API costs.
 
     Supports OpenAI and Anthropic clients. Returns the same client
@@ -24,23 +24,34 @@ def track(client, *, budget: float | None = None):
     Args:
         client: An OpenAI() or Anthropic() client instance.
         budget: Optional budget alert threshold in USD.
+        optimize: Enable smart model routing. Simple tasks are
+            automatically routed to cheaper models.
 
     Returns:
-        The same client, now tracked.
+        The same client, now tracked (and optionally optimized).
 
     Example:
         from openai import OpenAI
         from spent import track
 
+        # Track only:
         client = track(OpenAI())
-        # Use client normally -- costs are tracked automatically.
+
+        # Track + auto-optimize:
+        client = track(OpenAI(), optimize=True)
+        # Classification tasks -> gpt-4o-mini (auto)
+        # Complex reasoning -> stays on gpt-4o
     """
     from .tracker import Tracker
     from .patches import apply_all
+    from .router import Router
 
     tracker = Tracker.get()
     if budget is not None:
         tracker.set_budget(budget)
+
+    router = Router.get()
+    router.enabled = optimize
 
     apply_all()
     return client

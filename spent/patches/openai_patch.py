@@ -33,6 +33,7 @@ def _patch_sync(mod) -> None:
 
     @wraps(original)
     def tracked_create(self, *args, **kwargs):
+        kwargs = _maybe_reroute(kwargs)
         start = time.perf_counter()
         response = original(self, *args, **kwargs)
         elapsed_ms = int((time.perf_counter() - start) * 1000)
@@ -51,6 +52,7 @@ def _patch_async(mod) -> None:
 
     @wraps(original)
     async def tracked_create(self, *args, **kwargs):
+        kwargs = _maybe_reroute(kwargs)
         start = time.perf_counter()
         response = await original(self, *args, **kwargs)
         elapsed_ms = int((time.perf_counter() - start) * 1000)
@@ -77,6 +79,24 @@ def _patch_sync_legacy(mod) -> None:
 
     tracked_create._spent_patched = True
     mod.Completions.create = tracked_create
+
+
+def _maybe_reroute(kwargs: dict) -> dict:
+    """If router is enabled, reroute to optimal model."""
+    try:
+        from ..router import Router
+        router = Router.get()
+        if not router.enabled:
+            return kwargs
+        messages = kwargs.get("messages")
+        model = kwargs.get("model", "unknown")
+        if messages and model:
+            new_model = router.route(messages, model)
+            if new_model != model:
+                kwargs = {**kwargs, "model": new_model}
+    except Exception:
+        pass
+    return kwargs
 
 
 def _record_usage(response, model: str, elapsed_ms: int) -> None:
