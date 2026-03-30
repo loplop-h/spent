@@ -126,13 +126,13 @@ def _build_layout(width: int, height: int):
         n_bar = "█" * max(0, int(n_pct / 100 * bar_w))
         w_bar = "█" * max(0, int(w_pct / 100 * bar_w))
 
-        eff_lines.append(f" Productive ", style="bold green")
+        eff_lines.append(" Productive ", style="bold green")
         eff_lines.append(f"${productive_cost:.4f} ", style="green")
         eff_lines.append(f"{p_bar}\n", style="green")
-        eff_lines.append(f" Neutral    ", style="bold dim")
+        eff_lines.append(" Neutral    ", style="bold dim")
         eff_lines.append(f"${neutral_cost:.4f} ", style="dim")
         eff_lines.append(f"{n_bar}\n", style="dim")
-        eff_lines.append(f" Wasted     ", style="bold red")
+        eff_lines.append(" Wasted     ", style="bold red")
         eff_lines.append(f"${wasted_cost:.4f} ", style="red")
         eff_lines.append(f"{w_bar}", style="red")
     else:

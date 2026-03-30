@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from pathlib import Path
 
 import click
 
@@ -150,25 +151,137 @@ def cc_history(days: int) -> None:
         table.add_column("Efficiency", justify="right")
 
         for s in sessions:
-            score = s.get("efficiency_score", 0)
+            score = tracker.get_efficiency_score(s)
             color = "green" if score >= 75 else "yellow" if score >= 50 else "red"
             table.add_row(
                 s.get("date", "?"),
                 f"{s.get('duration_minutes', 0):.0f}m",
                 str(s.get("tool_uses", 0)),
                 f"${s.get('total_cost', 0):.4f}",
-                f"[{color}]{score}%[/]",
+                f"[{color}]{score:.0f}%[/]",
             )
         console.print(table)
     except ImportError:
         for s in sessions:
-            click.echo(f"{s.get('date', '?')} | {s.get('tool_uses', 0)} tools | ${s.get('total_cost', 0):.4f} | {s.get('efficiency_score', 0)}%")
+            score = tracker.get_efficiency_score(s)
+            click.echo(f"{s.get('date', '?')} | {s.get('tool_uses', 0)} tools | ${s.get('total_cost', 0):.4f} | {score:.0f}%")
+
+
+@cc.command("compact")
+@click.option("--days", "-d", default=30, help="Keep events from the last N days (default: 30)")
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt")
+def cc_compact(days: int, yes: bool) -> None:
+    """Compact the JSONL log file, keeping only recent events."""
+    from .claude_tracker import ClaudeTracker
+    tracker = ClaudeTracker()
+    log_path = tracker._log_path
+
+    if not log_path.exists():
+        click.echo("No log file to compact.")
+        return
+
+    from datetime import datetime, timedelta, timezone
+
+    before_size = log_path.stat().st_size
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    cutoff_str = cutoff.strftime("%Y-%m-%dT%H:%M:%S")
+
+    # Read all lines and filter.
+    kept_lines: list[str] = []
+    total_lines = 0
+    with open(log_path, "r", encoding="utf-8") as f:
+        for line in f:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            total_lines += 1
+            try:
+                data = json.loads(stripped)
+                ts = data.get("ts", "")
+                if ts >= cutoff_str:
+                    kept_lines.append(stripped)
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+    removed = total_lines - len(kept_lines)
+    click.echo(f"Log file: {log_path}")
+    click.echo(f"  Before: {before_size:,} bytes, {total_lines} events")
+    click.echo(f"  After:  {len(kept_lines)} events (removing {removed} older than {days} days)")
+
+    if removed == 0:
+        click.echo("Nothing to compact.")
+        return
+
+    if not yes:
+        if not click.confirm("Proceed with compaction?"):
+            click.echo("Aborted.")
+            return
+
+    # Write atomically: write to .tmp, then rename.
+    tmp_path = log_path.with_suffix(".jsonl.tmp")
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        for line in kept_lines:
+            f.write(line + "\n")
+
+    # Atomic rename (works on same filesystem).
+    import os
+    if sys.platform == "win32":
+        # Windows doesn't support atomic rename over existing file.
+        os.replace(str(tmp_path), str(log_path))
+    else:
+        os.replace(str(tmp_path), str(log_path))
+
+    after_size = log_path.stat().st_size
+    click.echo(f"Compacted: {before_size:,} -> {after_size:,} bytes ({removed} events removed)")
+
+
+@cc.command("uninstall")
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompts")
+def cc_uninstall(yes: bool) -> None:
+    """Remove spent hooks from Claude Code and optionally delete data."""
+    from .integrations.claude_code import remove_hooks, SETTINGS_PATH
+
+    removed = remove_hooks()
+    if removed:
+        click.echo("Removed from Claude Code settings:")
+        for item in removed:
+            click.echo(f"  - {item}")
+    else:
+        click.echo("No spent hooks found in Claude Code settings.")
+
+    # Offer to delete data directory.
+    data_dir = Path.home() / ".spent"
+    if data_dir.exists():
+        if yes or click.confirm(f"\nDelete data directory ({data_dir})?", default=False):
+            import shutil
+            shutil.rmtree(data_dir)
+            click.echo(f"Deleted {data_dir}")
+        else:
+            click.echo(f"Data directory kept at {data_dir}")
+
+    # Offer to restore backup.
+    backup_path = SETTINGS_PATH.with_suffix(".json.spent-backup")
+    if backup_path.exists():
+        if yes or click.confirm(f"\nRestore settings from backup ({backup_path})?", default=False):
+            import shutil
+            shutil.copy2(str(backup_path), str(SETTINGS_PATH))
+            click.echo(f"Restored {SETTINGS_PATH} from backup.")
 
 
 @cc.command("setup")
-def cc_setup() -> None:
+@click.option("--restore", is_flag=True, help="Restore settings from backup")
+def cc_setup(restore: bool) -> None:
     """Configure Claude Code hooks for automatic tracking."""
-    from .integrations.claude_code import setup_hooks
+    from .integrations.claude_code import setup_hooks, restore_backup
+
+    if restore:
+        restored = restore_backup()
+        if restored:
+            click.echo("Settings restored from backup. Restart Claude Code.")
+        else:
+            click.echo("No backup found to restore.")
+        return
+
     setup_hooks()
     click.echo("Done! Tracking hooks installed. Restart Claude Code to activate.")
 
@@ -451,7 +564,7 @@ def session(today: bool, days: int, as_json: bool) -> None:
         _print_session_detail(data, tracker)
 
 
-def _print_session_detail(data: dict, tracker: "ClaudeTracker") -> None:
+def _print_session_detail(data: dict, tracker) -> None:
     """Pretty-print a single session's metrics."""
     score = tracker.get_efficiency_score(data)
     eff = data.get("efficiency", {})
@@ -514,7 +627,7 @@ def _print_session_detail(data: dict, tracker: "ClaudeTracker") -> None:
             click.echo(f"  {tool_name}: {info['count']} uses, ${info['cost']:.4f}")
 
 
-def _print_session_list(sessions: list[dict], tracker: "ClaudeTracker") -> None:
+def _print_session_list(sessions: list[dict], tracker) -> None:
     """Pretty-print a list of session summaries."""
     try:
         from rich.console import Console

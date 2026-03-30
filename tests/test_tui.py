@@ -6,11 +6,8 @@ crashing and return the expected types.
 
 from __future__ import annotations
 
-import json
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -21,103 +18,182 @@ from spent.tui import (
 )
 
 
-# ── Helpers ────────────────────────────────────────────────────────
+# -- Helpers --------------------------------------------------------
 
-def _make_event(
+def _make_session_data(
     *,
-    tool: str = "Edit",
-    ts: str = "2026-03-30T10:00:00",
-    session: str = "sess-001",
-    event: str = "tool_use",
-    input_size: int = 400,
-    output_size: int = 200,
-    output_text: str = "",
+    session_id: str = "sess-001",
+    total_cost: float = 0.0123,
+    tool_uses: int = 5,
+    duration_minutes: float = 8.0,
+    productive: float = 0.008,
+    neutral: float = 0.003,
+    wasted: float = 0.0013,
+    by_tool: dict[str, dict] | None = None,
+    timeline: list[dict] | None = None,
 ) -> dict[str, Any]:
+    """Build a session metrics dict matching ClaudeTracker output."""
+    if by_tool is None:
+        by_tool = {
+            "Edit": {"count": 2, "cost": 0.005},
+            "Read": {"count": 2, "cost": 0.004},
+            "Bash": {"count": 1, "cost": 0.0033},
+        }
+    if timeline is None:
+        timeline = [
+            {"ts": "2026-03-30T10:00:00", "tool": "Read", "cost": 0.002, "status": "neutral"},
+            {"ts": "2026-03-30T10:01:00", "tool": "Edit", "cost": 0.003, "status": "productive"},
+            {"ts": "2026-03-30T10:02:00", "tool": "Bash", "cost": 0.003, "status": "productive"},
+            {"ts": "2026-03-30T10:03:00", "tool": "Read", "cost": 0.002, "status": "neutral"},
+            {"ts": "2026-03-30T10:04:00", "tool": "Edit", "cost": 0.002, "status": "productive"},
+        ]
     return {
-        "ts": ts,
-        "tool": tool,
-        "session": session,
-        "event": event,
-        "input_size": input_size,
-        "output_size": output_size,
-        "output_text": output_text,
+        "session_id": session_id,
+        "started": "2026-03-30T10:00:00",
+        "duration_minutes": duration_minutes,
+        "total_cost": total_cost,
+        "total_tokens": 12000,
+        "tool_uses": tool_uses,
+        "by_tool": by_tool,
+        "efficiency": {
+            "productive": productive,
+            "wasted": wasted,
+            "neutral": neutral,
+        },
+        "timeline": timeline,
     }
 
 
-def _session_events(
-    count: int = 5,
-    start: str = "2026-03-30T10:00:00",
-    session_id: str = "sess-001",
-) -> list[dict[str, Any]]:
-    base = datetime.fromisoformat(start)
-    tools = ["Read", "Grep", "Edit", "Write", "Bash"]
-    events: list[dict[str, Any]] = []
-    for i in range(count):
-        ts = (base + timedelta(minutes=i)).isoformat()
-        events.append(_make_event(
-            tool=tools[i % len(tools)],
-            ts=ts,
-            session=session_id,
-            input_size=400 + i * 100,
-            output_size=200 + i * 50,
-        ))
-    return events
+def _empty_session() -> dict[str, Any]:
+    return {
+        "session_id": "",
+        "started": "",
+        "duration_minutes": 0.0,
+        "total_cost": 0.0,
+        "total_tokens": 0,
+        "tool_uses": 0,
+        "by_tool": {},
+        "efficiency": {"productive": 0.0, "wasted": 0.0, "neutral": 0.0},
+        "timeline": [],
+    }
 
 
-def _write_log(path: Path, events: list[dict]) -> None:
-    with open(path, "w", encoding="utf-8") as f:
-        for ev in events:
-            f.write(json.dumps(ev) + "\n")
+def _patch_tracker(session_data: dict[str, Any], score: float = 65.0):
+    """Return a context manager that mocks ClaudeTracker inside _build_layout."""
+    mock_tracker = MagicMock()
+    mock_tracker.get_current_session.return_value = session_data
+    mock_tracker.get_efficiency_score.return_value = score
+    mock_cls = MagicMock(return_value=mock_tracker)
+    return patch("spent.claude_tracker.ClaudeTracker", mock_cls)
 
 
-# ── _build_layout tests ───────────────────────────────────────────
+# -- _build_layout tests -------------------------------------------
 
 class TestBuildLayout:
     """Verify _build_layout produces a renderable without crashing."""
 
-    def _setup_log(self, tmp_path: Path, events: list[dict] | None = None):
-        log = tmp_path / "sessions.jsonl"
-        if events:
-            _write_log(log, events)
-        else:
-            log.write_text("")
-        return log
-
-    def test_with_no_data(self, tmp_path: Path) -> None:
-        log = tmp_path / "nope.jsonl"  # doesn't exist
-        with patch("spent.claude_tracker.ClaudeTracker.LOG_PATH", log):
+    def test_with_no_session_id(self) -> None:
+        with _patch_tracker(_empty_session()):
             result = _build_layout(80, 40)
         from rich.panel import Panel
         assert isinstance(result, Panel)
 
-    def test_with_valid_session_data(self, tmp_path: Path) -> None:
-        log = self._setup_log(tmp_path, _session_events(count=8))
-        with patch("spent.claude_tracker.ClaudeTracker.LOG_PATH", log):
+    def test_with_valid_session_data(self) -> None:
+        with _patch_tracker(_make_session_data()):
             result = _build_layout(80, 40)
         from rich.layout import Layout
         assert isinstance(result, Layout)
 
-    def test_narrow_width_no_crash(self, tmp_path: Path) -> None:
-        log = self._setup_log(tmp_path, _session_events())
-        with patch("spent.claude_tracker.ClaudeTracker.LOG_PATH", log):
+    def test_narrow_width_no_crash(self) -> None:
+        with _patch_tracker(_make_session_data()):
             result = _build_layout(40, 20)
         assert result is not None
 
-    def test_wide_width_no_crash(self, tmp_path: Path) -> None:
-        log = self._setup_log(tmp_path, _session_events())
-        with patch("spent.claude_tracker.ClaudeTracker.LOG_PATH", log):
+    def test_wide_width_no_crash(self) -> None:
+        with _patch_tracker(_make_session_data()):
             result = _build_layout(200, 60)
         assert result is not None
 
-    def test_single_event(self, tmp_path: Path) -> None:
-        log = self._setup_log(tmp_path, [_make_event()])
-        with patch("spent.claude_tracker.ClaudeTracker.LOG_PATH", log):
+    def test_very_small_height(self) -> None:
+        with _patch_tracker(_make_session_data()):
+            result = _build_layout(80, 10)
+        assert result is not None
+
+    def test_single_tool_in_session(self) -> None:
+        data = _make_session_data(
+            tool_uses=1,
+            total_cost=0.003,
+            productive=0.003,
+            neutral=0.0,
+            wasted=0.0,
+            by_tool={"Edit": {"count": 1, "cost": 0.003}},
+            timeline=[
+                {"ts": "2026-03-30T10:00:00", "tool": "Edit",
+                 "cost": 0.003, "status": "productive"},
+            ],
+        )
+        with _patch_tracker(data, score=100.0):
             result = _build_layout(80, 40)
         from rich.layout import Layout
         assert isinstance(result, Layout)
 
+    def test_many_tools(self) -> None:
+        by_tool = {
+            name: {"count": 1, "cost": 0.001 * (i + 1)}
+            for i, name in enumerate(
+                ["Edit", "Write", "Read", "Grep", "Glob", "Bash", "Agent", "MultiEdit"]
+            )
+        }
+        data = _make_session_data(tool_uses=8, total_cost=0.036, by_tool=by_tool)
+        with _patch_tracker(data):
+            result = _build_layout(80, 40)
+        assert result is not None
 
-# ── _make_bar tests ────────────────────────────────────────────────
+    def test_zero_total_cost(self) -> None:
+        data = _make_session_data(
+            session_id="s1",
+            total_cost=0.0,
+            productive=0.0,
+            neutral=0.0,
+            wasted=0.0,
+            by_tool={},
+            timeline=[],
+        )
+        with _patch_tracker(data, score=0.0):
+            result = _build_layout(80, 40)
+        assert result is not None
+
+    def test_high_efficiency_score(self) -> None:
+        with _patch_tracker(_make_session_data(), score=95.0):
+            result = _build_layout(80, 40)
+        from rich.layout import Layout
+        assert isinstance(result, Layout)
+
+    def test_low_efficiency_score(self) -> None:
+        with _patch_tracker(_make_session_data(), score=15.0):
+            result = _build_layout(80, 40)
+        from rich.layout import Layout
+        assert isinstance(result, Layout)
+
+    def test_tracker_exception_returns_error_panel(self) -> None:
+        mock_cls = MagicMock(side_effect=RuntimeError("oops"))
+        with patch("spent.claude_tracker.ClaudeTracker", mock_cls):
+            result = _build_layout(80, 40)
+        from rich.panel import Panel
+        assert isinstance(result, Panel)
+
+    def test_empty_timeline(self) -> None:
+        data = _make_session_data(
+            timeline=[],
+            total_cost=0.005,
+            by_tool={"Edit": {"count": 1, "cost": 0.005}},
+        )
+        with _patch_tracker(data):
+            result = _build_layout(80, 40)
+        assert result is not None
+
+
+# -- _make_bar tests ------------------------------------------------
 
 class TestMakeBar:
     def test_returns_string(self) -> None:
@@ -148,11 +224,10 @@ class TestMakeBar:
     def test_width_affects_bar(self) -> None:
         short = _make_bar(50, 5)
         long = _make_bar(50, 40)
-        # The longer bar should contain more block characters.
         assert len(long) > len(short)
 
 
-# ── _fmt_duration tests ───────────────────────────────────────────
+# -- _fmt_duration tests --------------------------------------------
 
 class TestFmtDuration:
     def test_seconds_only(self) -> None:
@@ -165,116 +240,23 @@ class TestFmtDuration:
         assert _fmt_duration(1) == "1s"
 
     def test_exactly_60_seconds(self) -> None:
-        result = _fmt_duration(60)
-        assert result == "1m0s"
+        assert _fmt_duration(60) == "1m0s"
 
     def test_minutes_and_seconds(self) -> None:
-        result = _fmt_duration(90)
-        assert result == "1m30s"
+        assert _fmt_duration(90) == "1m30s"
 
     def test_many_minutes(self) -> None:
-        result = _fmt_duration(5 * 60 + 45)
-        assert result == "5m45s"
+        assert _fmt_duration(5 * 60 + 45) == "5m45s"
 
     def test_exactly_one_hour(self) -> None:
-        result = _fmt_duration(3600)
-        assert result == "1h0m"
+        assert _fmt_duration(3600) == "1h0m"
 
     def test_hours_and_minutes(self) -> None:
-        result = _fmt_duration(3600 + 1800)
-        assert result == "1h30m"
+        assert _fmt_duration(3600 + 1800) == "1h30m"
 
     def test_multiple_hours(self) -> None:
-        result = _fmt_duration(7200 + 900)
-        assert result == "2h15m"
+        assert _fmt_duration(7200 + 900) == "2h15m"
 
     def test_large_value(self) -> None:
         result = _fmt_duration(36000)
         assert "h" in result
-
-
-# Tests for _compute, _read_events, _get_latest_session removed:
-# consolidated into ClaudeTracker (tested in test_claude_tracker.py)
-
-class _RemovedTestCompute:
-    def test_empty_events(self) -> None:
-        result = _compute([])
-        assert result["score"] == 0
-        assert result["total_cost"] == 0
-        assert result["tool_uses"] == 0
-
-    def test_no_tool_use_events(self) -> None:
-        events = [
-            {"event": "session_start", "ts": "2026-03-30T10:00:00", "tool": ""},
-        ]
-        result = _compute(events)
-        assert result["tool_uses"] == 0
-        assert result["score"] == 0
-
-    def test_valid_events_produce_costs(self) -> None:
-        events = _session_events(count=5)
-        result = _compute(events)
-        assert result["total_cost"] > 0
-        assert result["tool_uses"] == 5
-        assert len(result["timeline"]) == 5
-
-    def test_by_tool_populated(self) -> None:
-        events = _session_events(count=5)
-        result = _compute(events)
-        assert len(result["by_tool"]) > 0
-        for name, info in result["by_tool"].items():
-            assert "count" in info
-            assert "cost" in info
-
-    def test_tips_is_list(self) -> None:
-        events = _session_events(count=5)
-        result = _compute(events)
-        assert isinstance(result["tips"], list)
-
-
-# ── _read_events tests ─────────────────────────────────────────────
-
-class _RemovedTestReadEvents:
-    def test_missing_file(self, tmp_path: Path) -> None:
-        with patch("spent.tui.LOG_PATH", tmp_path / "nope.jsonl"):
-            result = _read_events()
-        assert result == []
-
-    def test_valid_file(self, tmp_path: Path) -> None:
-        log = tmp_path / "sessions.jsonl"
-        _write_log(log, _session_events(count=3))
-        with patch("spent.tui.LOG_PATH", log):
-            result = _read_events()
-        assert len(result) == 3
-
-    def test_corrupt_lines_skipped(self, tmp_path: Path) -> None:
-        log = tmp_path / "sessions.jsonl"
-        with open(log, "w", encoding="utf-8") as f:
-            f.write(json.dumps(_make_event()) + "\n")
-            f.write("not json\n")
-            f.write(json.dumps(_make_event(tool="Write")) + "\n")
-        with patch("spent.tui.LOG_PATH", log):
-            result = _read_events()
-        assert len(result) == 2
-
-
-# ── _get_latest_session tests ──────────────────────────────────────
-
-class _RemovedTestGetLatestSession:
-    def test_empty_events(self) -> None:
-        sid, evs = _get_latest_session([])
-        assert sid == ""
-        assert evs == []
-
-    def test_single_session(self) -> None:
-        events = _session_events(count=3)
-        sid, evs = _get_latest_session(events)
-        assert sid == "sess-001"
-        assert len(evs) == 3
-
-    def test_multiple_sessions_returns_last(self) -> None:
-        events_a = _session_events(count=2, session_id="aaa")
-        events_b = _session_events(count=3, session_id="bbb", start="2026-03-30T11:00:00")
-        sid, evs = _get_latest_session(events_a + events_b)
-        assert sid == "bbb"
-        assert len(evs) == 3

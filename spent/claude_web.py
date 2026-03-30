@@ -15,7 +15,6 @@ Usage:
 from __future__ import annotations
 
 import json
-import math
 import threading
 import webbrowser
 from collections import defaultdict
@@ -27,21 +26,20 @@ from typing import Any
 DEFAULT_PORT = 5051
 JSONL_PATH = Path.home() / ".spent" / "claude-sessions.jsonl"
 
-# ---------------------------------------------------------------------------
-# Cost estimation constants
-# ---------------------------------------------------------------------------
-CHARS_PER_TOKEN = 4
-BASE_OVERHEAD_TOKENS = 500
-CONTEXT_GROWTH_PER_TURN = 200
-SONNET_INPUT_PER_1M = 3.0
-SONNET_OUTPUT_PER_1M = 15.0
-
-# ---------------------------------------------------------------------------
-# Efficiency classification
-# ---------------------------------------------------------------------------
-PRODUCTIVE_TOOLS = frozenset({"Edit", "Write", "Agent"})
-NEUTRAL_TOOLS = frozenset({"Read", "Grep", "Glob", "TaskCreate", "TaskUpdate"})
-# Wasted = Bash with error in output, or repeated Read of same target within 60s
+# Cost estimation and classification delegated to cost_engine via ClaudeTracker.
+# The constants below are kept ONLY as fallbacks for the self-contained
+# HTML dashboard rendering (which duplicates some logic for offline use).
+# The canonical source of truth is cost_engine.py.
+from .cost_engine import (
+    CHARS_PER_TOKEN,
+    BASE_OVERHEAD_TOKENS,
+    CONTEXT_GROWTH_PER_TURN,
+    MODEL_PRICING,
+    PRODUCTIVE_TOOLS,
+    NEUTRAL_TOOLS,
+)
+SONNET_INPUT_PER_1M = MODEL_PRICING["sonnet"].input_per_million
+SONNET_OUTPUT_PER_1M = MODEL_PRICING["sonnet"].output_per_million
 
 
 # ---------------------------------------------------------------------------
@@ -298,7 +296,7 @@ def _generate_insights(
         if total_cost > 0 and (wasted_total / total_cost) > 0.2:
             insights.append({
                 "type": "warning",
-                "text": f"Over 20% of cost was wasted. Review failed commands and repeated reads.",
+                "text": "Over 20% of cost was wasted. Review failed commands and repeated reads.",
             })
 
     # Low productive percentage
@@ -429,16 +427,12 @@ def _share_card_html(data: dict) -> str:
     eff = data["efficiency"]
     if eff >= 80:
         ring_color = "#3fb950"
-        grade = "A"
     elif eff >= 60:
         ring_color = "#d29922"
-        grade = "B"
     elif eff >= 40:
         ring_color = "#d29922"
-        grade = "C"
     else:
         ring_color = "#f85149"
-        grade = "D"
 
     return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8">
@@ -1094,10 +1088,10 @@ def serve(port: int = DEFAULT_PORT, open_browser: bool = True) -> None:
     server = HTTPServer(("127.0.0.1", port), ClaudeDashboardHandler)
     url = f"http://localhost:{port}"
 
-    print(f"\n  Claude Code Dashboard")
+    print("\n  Claude Code Dashboard")
     print(f"  {url}")
     print(f"  Data: {JSONL_PATH}")
-    print(f"\n  Press Ctrl+C to stop.\n")
+    print("\n  Press Ctrl+C to stop.\n")
 
     if open_browser:
         threading.Timer(0.5, lambda: webbrowser.open(url)).start()

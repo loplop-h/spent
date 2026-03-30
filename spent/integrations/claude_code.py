@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+import shutil
 import sys
 from pathlib import Path
 
 
 SETTINGS_PATH = Path.home() / ".claude" / "settings.json"
+BACKUP_PATH = SETTINGS_PATH.with_suffix(".json.spent-backup")
 
 
 def setup_statusline() -> None:
@@ -37,7 +39,12 @@ def setup_hooks() -> None:
       - PostToolUse (matcher "*"): track-tool-use.sh  (async, 5s timeout)
       - SessionStart (matcher "*"): session-start.sh  (async, 5s timeout)
       - Stop (matcher "*"): session-end.sh             (async, 10s timeout)
+
+    Creates a backup of settings.json before modifying it.
     """
+    # Create backup before modifying settings.
+    _create_backup()
+
     settings = _read_settings()
     hooks = dict(settings.get("hooks", {}))
 
@@ -92,10 +99,71 @@ def setup_hooks() -> None:
     updated_settings = {**settings, "hooks": hooks}
     _write_settings(updated_settings)
 
-    print("Claude Code hooks configured for spent session tracking.")
-    print(f"  PostToolUse  -> {track_script}")
-    print(f"  SessionStart -> {start_script}")
-    print(f"  Stop         -> {end_script}")
+    # Show what was installed.
+    _print_setup_summary(track_script, start_script, end_script)
+
+
+def remove_hooks() -> list[str]:
+    """Remove all spent-related hooks and statusline from Claude Code settings.
+
+    Returns a list of descriptions of what was removed.
+    """
+    settings = _read_settings()
+    if not settings:
+        return []
+
+    removed: list[str] = []
+
+    # Remove hooks that contain "spent" in the command string.
+    hooks = settings.get("hooks", {})
+    if hooks:
+        cleaned_hooks = {}
+        for hook_type, entries in hooks.items():
+            if not isinstance(entries, list):
+                cleaned_hooks[hook_type] = entries
+                continue
+            kept_entries = []
+            for entry in entries:
+                entry_hooks = entry.get("hooks", [])
+                has_spent = any(
+                    "spent" in h.get("command", "")
+                    for h in entry_hooks
+                    if isinstance(h, dict)
+                )
+                if has_spent:
+                    for h in entry_hooks:
+                        cmd = h.get("command", "")
+                        if "spent" in cmd:
+                            removed.append(f"Hook {hook_type}: {cmd}")
+                else:
+                    kept_entries.append(entry)
+            if kept_entries:
+                cleaned_hooks[hook_type] = kept_entries
+        settings = {**settings, "hooks": cleaned_hooks}
+
+    # Remove statusline if it references "spent".
+    statusline = settings.get("statusline", {})
+    if isinstance(statusline, dict):
+        cmd = statusline.get("command", "")
+        if "spent" in cmd:
+            removed.append(f"Statusline: {cmd}")
+            settings = {k: v for k, v in settings.items() if k != "statusline"}
+
+    if removed:
+        _write_settings(settings)
+
+    return removed
+
+
+def restore_backup() -> bool:
+    """Restore settings.json from the spent backup.
+
+    Returns True if restored, False if no backup found.
+    """
+    if not BACKUP_PATH.exists():
+        return False
+    shutil.copy2(str(BACKUP_PATH), str(SETTINGS_PATH))
+    return True
 
 
 def setup() -> None:
@@ -107,6 +175,13 @@ def setup() -> None:
 
 
 # -- Internal helpers --------------------------------------------------------
+
+
+def _create_backup() -> None:
+    """Back up settings.json before modifying it."""
+    if SETTINGS_PATH.exists():
+        shutil.copy2(str(SETTINGS_PATH), str(BACKUP_PATH))
+        print(f"Backup saved to {BACKUP_PATH}")
 
 
 def _read_settings() -> dict:
@@ -193,3 +268,38 @@ def _merge_hook(
 
     updated_list = [*existing_list, new_entry]
     return {**hooks, hook_type: updated_list}
+
+
+def _print_setup_summary(
+    track_script: str, start_script: str, end_script: str
+) -> None:
+    """Print a summary of what was installed."""
+    try:
+        from rich.console import Console
+        from rich.panel import Panel
+
+        console = Console()
+
+        hooks_text = (
+            f"[bold]PostToolUse[/]   -> {track_script}\n"
+            f"[bold]SessionStart[/]  -> {start_script}\n"
+            f"[bold]Stop[/]          -> {end_script}"
+        )
+        console.print(Panel(hooks_text, title="[bold green]Hooks installed[/]", border_style="green"))
+
+        next_steps = (
+            "[bold]1.[/] Restart Claude Code\n"
+            "[bold]2.[/] Open a side terminal: [cyan]spent cc live[/]\n"
+            "[bold]3.[/] Work normally -- costs appear in real-time"
+        )
+        console.print(Panel(next_steps, title="[bold blue]Next steps[/]", border_style="blue"))
+    except ImportError:
+        print("Claude Code hooks configured for spent session tracking.")
+        print(f"  PostToolUse  -> {track_script}")
+        print(f"  SessionStart -> {start_script}")
+        print(f"  Stop         -> {end_script}")
+        print()
+        print("Next steps:")
+        print("  1. Restart Claude Code")
+        print("  2. Open a side terminal: spent cc live")
+        print("  3. Work normally -- costs appear in real-time")

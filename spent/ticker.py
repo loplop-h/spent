@@ -137,7 +137,7 @@ def _print_ticker_frame(
 
     except ImportError:
         # Fallback without Rich
-        sys.stderr.write(f"\033[2J\033[H")  # clear screen
+        sys.stderr.write("\033[2J\033[H")  # clear screen
         sys.stderr.write(f"spent | ${total_cost:.4f} | {total_calls} calls | {total_tokens:,} tok\n")
         sys.stderr.flush()
 
@@ -148,7 +148,7 @@ def _build_panel(records: list[dict]):
     from rich.panel import Panel
 
     total_cost = sum(r["cost"] for r in records)
-    total_tokens = sum(r["input_tokens"] + r["output_tokens"] for r in records)
+    sum(r["input_tokens"] + r["output_tokens"] for r in records)
     total_calls = len(records)
 
     by_model: dict[str, dict] = {}

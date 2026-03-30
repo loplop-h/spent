@@ -1120,11 +1120,11 @@ def run_server(port: int = DEFAULT_PORT, open_browser: bool = True) -> None:
     server = HTTPServer(("127.0.0.1", port), DashboardHandler)
     url = f"http://localhost:{port}"
 
-    print(f"\n  spent web dashboard")
-    print(f"  -------------------")
+    print("\n  spent web dashboard")
+    print("  -------------------")
     print(f"  Running at:  {url}")
     print(f"  Database:    {storage.db_path}")
-    print(f"  Press Ctrl+C to stop\n")
+    print("  Press Ctrl+C to stop\n")
 
     if open_browser:
         threading.Timer(0.5, webbrowser.open, args=[url]).start()
