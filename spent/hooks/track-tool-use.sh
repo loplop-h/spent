@@ -24,7 +24,7 @@ fi
 
 if [ -n "$PY" ]; then
     printf '%s' "$PAYLOAD" | $PY -c "
-import sys, json
+import sys, json, os
 
 try:
     d = json.loads(sys.stdin.read())
@@ -64,11 +64,21 @@ try:
     from datetime import datetime, timezone
     ts = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S')
 
+    # Read model from SessionStart-persisted file
+    model = ''
+    try:
+        model_file = os.path.join(os.path.expanduser('~'), '.spent', 'models', session[:16] + '.txt')
+        with open(model_file) as mf:
+            model = mf.read().strip()
+    except (OSError, FileNotFoundError):
+        pass
+
     record = {
         'ts': ts,
         'event': 'tool_use',
         'session': session[:16],
         'tool': tool,
+        'model': model,
         'input_size': input_size,
         'output_size': output_size,
         'has_error': has_error,
@@ -78,7 +88,6 @@ try:
 
     line = json.dumps(record, ensure_ascii=False)
 
-    import os
     spent_dir = os.path.join(os.path.expanduser('~'), '.spent')
     os.makedirs(spent_dir, exist_ok=True)
     with open(os.path.join(spent_dir, 'claude-sessions.jsonl'), 'a') as f:

@@ -280,3 +280,79 @@ class TestCcGroup:
         result = runner.invoke(main, ["--help"])
         assert result.exit_code == 0
         assert "cc" in result.output
+
+
+# ── cc export ──────────────────────────────────────────────────────
+
+def _patch_claude_storage(db_path: Path, jsonl_path: Path):
+    """Patch ClaudeStorage so the CLI uses a temp db and temp JSONL."""
+    from unittest.mock import patch, MagicMock
+
+    original_init = __import__("spent.storage", fromlist=["ClaudeStorage"]).ClaudeStorage.__init__
+
+    def _patched_init(self, db_path_arg=None):
+        original_init(self, db_path=db_path)
+        # Override the JSONL default so import_from_jsonl reads our file.
+        import spent.storage as _storage_mod
+        _storage_mod.DEFAULT_JSONL_PATH = jsonl_path
+
+    return patch("spent.storage.ClaudeStorage.__init__", _patched_init)
+
+
+class TestCcExport:
+    def test_export_help(self, runner: CliRunner) -> None:
+        """The export subcommand must respond to --help with exit code 0."""
+        result = runner.invoke(main, ["cc", "export", "--help"])
+        assert result.exit_code == 0
+        assert "export" in result.output.lower() or "format" in result.output.lower()
+
+    def test_export_sqlite_no_data(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """Running export when the JSONL file is absent must not crash."""
+        empty_jsonl = tmp_path / "nonexistent.jsonl"  # does not exist
+        db_path = tmp_path / "export_test.db"
+
+        from unittest.mock import patch
+        import spent.storage as _storage_mod
+
+        original_default = _storage_mod.DEFAULT_JSONL_PATH
+        try:
+            _storage_mod.DEFAULT_JSONL_PATH = empty_jsonl
+            with patch("spent.storage.DEFAULT_DB_PATH", db_path):
+                result = runner.invoke(main, ["cc", "export"])
+        finally:
+            _storage_mod.DEFAULT_JSONL_PATH = original_default
+
+        assert result.exit_code == 0
+
+    def test_export_json_format(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """Export with --format json should include JSON with sessions and model_breakdown."""
+        jsonl_path = tmp_path / "sessions.jsonl"
+        db_path = tmp_path / "export_json.db"
+        _write_log(jsonl_path, _session_events(count=3))
+
+        import spent.storage as _storage_mod
+
+        original_default_jsonl = _storage_mod.DEFAULT_JSONL_PATH
+        original_default_db = _storage_mod.DEFAULT_DB_PATH
+        try:
+            _storage_mod.DEFAULT_JSONL_PATH = jsonl_path
+            _storage_mod.DEFAULT_DB_PATH = db_path
+            result = runner.invoke(main, ["cc", "export", "--format", "json"])
+        finally:
+            _storage_mod.DEFAULT_JSONL_PATH = original_default_jsonl
+            _storage_mod.DEFAULT_DB_PATH = original_default_db
+
+        assert result.exit_code == 0
+
+        # The CLI may emit a status line before the JSON object; find the JSON
+        # block by locating the first '{'.
+        output = result.output
+        json_start = output.find("{")
+        assert json_start != -1, f"No JSON object found in output: {output!r}"
+        parsed = json.loads(output[json_start:])
+        assert "sessions" in parsed
+        assert "model_breakdown" in parsed

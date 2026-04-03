@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from . import cost_engine
-from .cost_engine import EventData
+from .cost_engine import EventData, normalize_model_name
 
 
 # -- Data types --------------------------------------------------------------
@@ -49,7 +49,7 @@ class ToolEvent:
                 input_size=int(d.get("input_size", 0)),
                 output_size=int(d.get("output_size", 0)),
                 session=d.get("session", ""),
-                model=d.get("model", "sonnet"),
+                model=normalize_model_name(d.get("model", "sonnet")),
                 event=d.get("event", "tool_use"),
                 has_error=bool(d.get("has_error", False)),
                 file_path=d.get("file_path", ""),
@@ -233,6 +233,7 @@ class ClaudeTracker:
         total_input_tokens = 0
         total_output_tokens = 0
         by_tool: dict[str, ToolStats] = {}
+        by_model: dict[str, dict[str, Any]] = {}
         timeline: list[dict[str, Any]] = []
 
         for turn_number, event in enumerate(tool_events):
@@ -252,6 +253,16 @@ class ClaudeTracker:
             stats.cost += cost
             stats.input_tokens += input_tokens
             stats.output_tokens += output_tokens
+
+            # Per-model aggregation.
+            model_stats = by_model.setdefault(
+                event.model,
+                {"count": 0, "cost": 0.0, "input_tokens": 0, "output_tokens": 0},
+            )
+            model_stats["count"] += 1
+            model_stats["cost"] += cost
+            model_stats["input_tokens"] += input_tokens
+            model_stats["output_tokens"] += output_tokens
 
             # Classify productivity via cost_engine.
             status = cost_engine.classify_event(
@@ -295,6 +306,17 @@ class ClaudeTracker:
         # Derive date from started timestamp.
         date = started[:10] if len(started) >= 10 else ""
 
+        # Dominant model (most tool uses).
+        dominant_model = max(
+            by_model, key=lambda m: by_model[m]["count"],
+        ) if by_model else "sonnet"
+
+        # Round per-model costs.
+        by_model_rounded = {
+            m: {**s, "cost": round(s["cost"], 6)}
+            for m, s in by_model.items()
+        }
+
         return {
             "session_id": session_id,
             "started": started,
@@ -302,6 +324,10 @@ class ClaudeTracker:
             "duration_minutes": round(duration_minutes, 1),
             "total_cost": round(total_cost, 6),
             "total_tokens": total_input_tokens + total_output_tokens,
+            "total_input_tokens": total_input_tokens,
+            "total_output_tokens": total_output_tokens,
+            "model": dominant_model,
+            "by_model": by_model_rounded,
             "tool_uses": len(tool_events),
             "by_tool": by_tool_dict,
             "efficiency": {
@@ -353,6 +379,10 @@ class ClaudeTracker:
             "duration_minutes": 0.0,
             "total_cost": 0.0,
             "total_tokens": 0,
+            "total_input_tokens": 0,
+            "total_output_tokens": 0,
+            "model": "sonnet",
+            "by_model": {},
             "tool_uses": 0,
             "by_tool": {},
             "efficiency": {

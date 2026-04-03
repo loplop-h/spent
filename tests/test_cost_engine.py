@@ -7,6 +7,7 @@ from spent.cost_engine import (
     classify_event,
     compute_efficiency_score,
     generate_tips,
+    normalize_model_name,
     EventData,
     MODEL_PRICING,
 )
@@ -219,3 +220,39 @@ class TestGenerateTips:
             total_cost=0.10, wasted_cost=0.0, timeline=[],
         )
         assert any("Agent" in t for t in tips)
+
+
+# ── normalize_model_name tests ─────────────────────────────────────
+
+class TestNormalizeModelName:
+    def test_full_opus_id(self):
+        assert normalize_model_name("claude-opus-4-6") == "opus"
+
+    def test_full_sonnet_id(self):
+        assert normalize_model_name("claude-sonnet-4-6") == "sonnet"
+
+    def test_full_haiku_id(self):
+        assert normalize_model_name("claude-haiku-4-5") == "haiku"
+
+    def test_legacy_sonnet_id(self):
+        assert normalize_model_name("claude-3-5-sonnet-20241022") == "sonnet"
+
+    def test_legacy_opus_id(self):
+        assert normalize_model_name("claude-3-opus-20240229") == "opus"
+
+    def test_legacy_haiku_id(self):
+        assert normalize_model_name("claude-3-haiku-20240307") == "haiku"
+
+    def test_short_name_passthrough(self):
+        assert normalize_model_name("sonnet") == "sonnet"
+        assert normalize_model_name("opus") == "opus"
+        assert normalize_model_name("haiku") == "haiku"
+
+    def test_empty_string_defaults(self):
+        assert normalize_model_name("") == "sonnet"
+
+    def test_unknown_model_defaults(self):
+        assert normalize_model_name("gpt-4o") == "sonnet"
+
+    def test_dated_variant(self):
+        assert normalize_model_name("claude-sonnet-4-6-20260101") == "sonnet"

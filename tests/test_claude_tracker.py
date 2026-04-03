@@ -622,3 +622,89 @@ class TestEdgeCases:
         session = tracker.get_current_session()
         assert session["session_id"] == ""
         assert session["tool_uses"] == 0
+
+
+# ── Model field parsing tests ──────────────────────────────────────
+
+class TestModelParsing:
+    def test_model_parsed_from_jsonl(self, tmp_path: Path) -> None:
+        """Full model ID in JSONL should be normalized to short family name."""
+        log = tmp_path / "sessions.jsonl"
+        _write_jsonl(log, [_make_event(model="claude-opus-4-6")])
+
+        tracker = ClaudeTracker(log_path=log)
+        event = ToolEvent.from_line(json.dumps(_make_event(model="claude-opus-4-6")))
+        assert event is not None
+        assert event.model == "opus"
+
+    def test_model_defaults_to_sonnet(self, tmp_path: Path) -> None:
+        """Missing model field should default to sonnet."""
+        raw: dict[str, Any] = {
+            "ts": "2026-04-01T10:00:00",
+            "tool": "Edit",
+            "input_size": 400,
+            "output_size": 200,
+            "session": "sess-001",
+            "event": "tool_use",
+            "has_error": False,
+            "file_path": "",
+            "output_text": "",
+        }
+        event = ToolEvent.from_line(json.dumps(raw))
+        assert event is not None
+        assert event.model == "sonnet"
+
+    def test_full_model_id_normalized(self, tmp_path: Path) -> None:
+        """Dated variant of haiku model ID should normalize to 'haiku'."""
+        event = ToolEvent.from_line(
+            json.dumps(_make_event(model="claude-haiku-4-5-20251001"))
+        )
+        assert event is not None
+        assert event.model == "haiku"
+
+
+# ── Session metrics model / token fields ──────────────────────────
+
+class TestSessionMetricsModel:
+    def test_model_in_session_metrics(self, tmp_path: Path) -> None:
+        """Session metrics dict must contain a 'model' key."""
+        log = tmp_path / "sessions.jsonl"
+        _write_jsonl(log, _make_session_events(count=3))
+
+        tracker = ClaudeTracker(log_path=log)
+        session = tracker.get_current_session()
+        assert "model" in session
+
+    def test_by_model_in_session_metrics(self, tmp_path: Path) -> None:
+        """Session metrics dict must contain a 'by_model' dict."""
+        log = tmp_path / "sessions.jsonl"
+        _write_jsonl(log, _make_session_events(count=3))
+
+        tracker = ClaudeTracker(log_path=log)
+        session = tracker.get_current_session()
+        assert "by_model" in session
+        assert isinstance(session["by_model"], dict)
+
+    def test_total_input_output_tokens_in_metrics(self, tmp_path: Path) -> None:
+        """Session metrics must include total_input_tokens and total_output_tokens."""
+        log = tmp_path / "sessions.jsonl"
+        _write_jsonl(log, _make_session_events(count=3))
+
+        tracker = ClaudeTracker(log_path=log)
+        session = tracker.get_current_session()
+        assert "total_input_tokens" in session
+        assert "total_output_tokens" in session
+        assert session["total_input_tokens"] > 0
+        assert session["total_output_tokens"] > 0
+
+    def test_empty_session_has_model_fields(self, empty_tracker: ClaudeTracker) -> None:
+        """Empty session must still contain all model-related keys with safe defaults."""
+        session = empty_tracker.get_current_session()
+        assert "model" in session
+        assert "by_model" in session
+        assert "total_input_tokens" in session
+        assert "total_output_tokens" in session
+        assert session["model"] == "sonnet"
+        assert session["by_model"] == {}
+        assert session["total_input_tokens"] == 0
+        assert session["total_output_tokens"] == 0

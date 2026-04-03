@@ -234,6 +234,79 @@ def cc_compact(days: int, yes: bool) -> None:
     after_size = log_path.stat().st_size
     click.echo(f"Compacted: {before_size:,} -> {after_size:,} bytes ({removed} events removed)")
 
+    # Clean up old model files.
+    import time as _time
+    models_dir = Path.home() / ".spent" / "models"
+    if models_dir.exists():
+        cutoff_time = _time.time() - (days * 86400)
+        cleaned = 0
+        for model_file in models_dir.iterdir():
+            try:
+                if model_file.stat().st_mtime < cutoff_time:
+                    model_file.unlink()
+                    cleaned += 1
+            except OSError:
+                pass
+        if cleaned:
+            click.echo(f"Cleaned {cleaned} old model files")
+
+
+@cc.command("export")
+@click.option("--project", "-p", default=None, help="Filter by project name")
+@click.option("--output", "-o", "output_path", default=None, type=click.Path(), help="Output file path")
+@click.option("--format", "fmt", type=click.Choice(["sqlite", "csv", "json"]), default="sqlite", help="Export format")
+def cc_export(project: str | None, output_path: str | None, fmt: str) -> None:
+    """Export Claude Code session data to SQLite, CSV, or JSON.
+
+    \b
+    Examples:
+        spent cc export                           # Import JSONL into SQLite
+        spent cc export --format csv -o costs.csv # CSV export
+        spent cc export --format json             # JSON to stdout
+        spent cc export --project myapp           # Filter by project
+    """
+    from .storage import ClaudeStorage
+
+    store = ClaudeStorage()
+
+    # Always import latest JSONL data first.
+    imported = store.import_from_jsonl(project=project)
+    if imported:
+        click.echo(f"Imported {imported} new events into SQLite")
+
+    if fmt == "sqlite":
+        click.echo(f"SQLite database: {store.db_path}")
+        sessions = store.get_sessions(project=project)
+        click.echo(f"Sessions: {len(sessions)}")
+        breakdown = store.get_model_breakdown(project=project)
+        if breakdown:
+            click.echo("Model breakdown:")
+            for row in breakdown:
+                click.echo(
+                    f"  {row['model']:>8}  "
+                    f"{row['events']} events  "
+                    f"${row['total_cost']:.4f}"
+                )
+
+    elif fmt == "csv":
+        out = Path(output_path) if output_path else Path("spent-export.csv")
+        count = store.export_csv(out, project=project)
+        click.echo(f"Exported {count} events to {out}")
+
+    elif fmt == "json":
+        sessions = store.get_sessions(project=project)
+        breakdown = store.get_model_breakdown(project=project)
+        result = {
+            "sessions": sessions,
+            "model_breakdown": breakdown,
+        }
+        output = json.dumps(result, indent=2, default=str)
+        if output_path:
+            Path(output_path).write_text(output, encoding="utf-8")
+            click.echo(f"Exported to {output_path}")
+        else:
+            click.echo(output)
+
 
 @cc.command("uninstall")
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompts")

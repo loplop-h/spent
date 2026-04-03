@@ -110,6 +110,12 @@ def _build_layout(width: int, height: int):
     header_text.append(f"  {cost_str}", style="bold white")
     header_text.append(f"  {duration_str}", style="dim")
     header_text.append(f"  {tool_uses} tools", style="dim")
+
+    model = data.get("model", "sonnet")
+    model_colors = {"opus": "magenta", "sonnet": "cyan", "haiku": "green"}
+    model_color = model_colors.get(model, "white")
+    header_text.append(f"  {model.upper()}", style=f"bold {model_color}")
+
     header_text.append("\n ")
     header_text.append_text(Text.from_markup(score_bar))
 
@@ -141,6 +147,33 @@ def _build_layout(width: int, height: int):
 
     eff_panel = Panel(eff_lines, title="[dim]Breakdown[/]", border_style="dim", height=5)
 
+    # -- Token split --
+    total_input_tokens = data.get("total_input_tokens", 0)
+    total_output_tokens = data.get("total_output_tokens", 0)
+    total_tokens = data.get("total_tokens", 0)
+
+    token_text = Text()
+    if total_tokens > 0:
+        in_pct = int(total_input_tokens / total_tokens * 100)
+        out_pct = 100 - in_pct
+        bar_w = max(width - 30, 10)
+
+        in_bar = "█" * max(1, int(in_pct / 100 * bar_w))
+        out_bar = "█" * max(1, int(out_pct / 100 * bar_w))
+
+        token_text.append(" Input  ", style="bold cyan")
+        token_text.append(f"{total_input_tokens:,} ", style="cyan")
+        token_text.append(f"({in_pct}%) ", style="dim")
+        token_text.append(f"{in_bar}\n", style="cyan")
+        token_text.append(" Output ", style="bold yellow")
+        token_text.append(f"{total_output_tokens:,} ", style="yellow")
+        token_text.append(f"({out_pct}%) ", style="dim")
+        token_text.append(f"{out_bar}", style="yellow")
+    else:
+        token_text.append(" No token data yet", style="dim")
+
+    token_panel = Panel(token_text, title="[dim]Tokens[/]", border_style="dim", height=4)
+
     # -- Tool breakdown --
     tool_table = Table(
         show_header=True,
@@ -166,7 +199,19 @@ def _build_layout(width: int, height: int):
             row.append(f"[green]{mini_bar}[/] {pct}%")
         tool_table.add_row(*row)
 
-    tools_panel = Panel(tool_table, title="[dim]By Tool[/]", border_style="dim")
+    # Per-model cost breakdown (only when multiple models used).
+    by_model = data.get("by_model", {})
+    tools_title = "[dim]By Tool[/]"
+    if len(by_model) > 1:
+        model_parts = []
+        for m_name, m_info in sorted(
+            by_model.items(), key=lambda x: x[1]["cost"], reverse=True,
+        ):
+            m_color = model_colors.get(m_name, "white")
+            model_parts.append(f"[{m_color}]{m_name.upper()} ${m_info['cost']:.4f}[/]")
+        tools_title = f"[dim]By Tool[/]  {' | '.join(model_parts)}"
+
+    tools_panel = Panel(tool_table, title=tools_title, border_style="dim")
 
     # -- Timeline (last N actions) --
     max_timeline = max(3, (height - 18) // 2)
@@ -212,6 +257,7 @@ def _build_layout(width: int, height: int):
     layout.split_column(
         Layout(header, name="header", size=4),
         Layout(eff_panel, name="efficiency", size=5),
+        Layout(token_panel, name="tokens", size=4),
         Layout(tools_panel, name="tools", size=min(9, len(by_tool) + 3)),
         Layout(timeline_panel, name="timeline"),
         Layout(tips_panel, name="tips", size=max(3, len(tips[:3]) + 2)),

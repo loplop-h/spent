@@ -33,6 +33,40 @@ MODEL_PRICING: dict[str, ModelPricing] = {
 
 DEFAULT_MODEL = "sonnet"
 
+_MODEL_PREFIXES: tuple[tuple[str, str], ...] = (
+    ("claude-opus", "opus"),
+    ("claude-sonnet", "sonnet"),
+    ("claude-haiku", "haiku"),
+    ("claude-3-opus", "opus"),
+    ("claude-3-5-sonnet", "sonnet"),
+    ("claude-3-sonnet", "sonnet"),
+    ("claude-3-5-haiku", "haiku"),
+    ("claude-3-haiku", "haiku"),
+)
+
+_SHORT_NAMES = frozenset(MODEL_PRICING.keys())
+
+
+def normalize_model_name(raw: str) -> str:
+    """Map a full Claude model ID to its short family name.
+
+    Examples:
+        "claude-sonnet-4-6"          -> "sonnet"
+        "claude-opus-4-6"            -> "opus"
+        "claude-haiku-4-5-20251001"  -> "haiku"
+        "sonnet"                     -> "sonnet"  (pass-through)
+        ""                           -> "sonnet"  (default)
+    """
+    if not raw:
+        return DEFAULT_MODEL
+    if raw in _SHORT_NAMES:
+        return raw
+    lower = raw.lower()
+    for prefix, family in _MODEL_PREFIXES:
+        if lower.startswith(prefix):
+            return family
+    return DEFAULT_MODEL
+
 
 # ── Classification constants ────────────────────────────────────────
 

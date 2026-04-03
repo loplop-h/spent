@@ -18,16 +18,28 @@ fi
 
 if [ -n "$PY" ]; then
     printf '%s' "$PAYLOAD" | $PY -c "
-import sys, json
+import sys, json, os
 from datetime import datetime, timezone
 try:
     d = json.loads(sys.stdin.read()) if sys.stdin.readable() else {}
 except Exception:
     d = {}
 session = d.get('session_id', 'unknown')[:16]
+model = d.get('model', '')
 ts = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S')
-record = json.dumps({'ts': ts, 'event': 'session_start', 'session': session})
-with open('$HOME/.spent/claude-sessions.jsonl', 'a') as f:
+
+spent_dir = os.path.join(os.path.expanduser('~'), '.spent')
+os.makedirs(spent_dir, exist_ok=True)
+
+# Persist model for PostToolUse hooks to read
+if model:
+    models_dir = os.path.join(spent_dir, 'models')
+    os.makedirs(models_dir, exist_ok=True)
+    with open(os.path.join(models_dir, session + '.txt'), 'w') as mf:
+        mf.write(model)
+
+record = json.dumps({'ts': ts, 'event': 'session_start', 'session': session, 'model': model})
+with open(os.path.join(spent_dir, 'claude-sessions.jsonl'), 'a') as f:
     f.write(record + '\n')
 " 2>/dev/null
 else
