@@ -142,7 +142,7 @@ class ClaudeTracker:
 
         events: list[ToolEvent] = []
         try:
-            with open(self._log_path, "r", encoding="utf-8") as f:
+            with open(self._log_path, "r", encoding="utf-8", errors="replace") as f:
                 for line in f:
                     stripped = line.strip()
                     if not stripped:

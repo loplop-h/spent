@@ -56,7 +56,7 @@ def _read_events() -> list[dict]:
         return []
     events: list[dict] = []
     try:
-        with open(JSONL_PATH, "r", encoding="utf-8") as f:
+        with open(JSONL_PATH, "r", encoding="utf-8", errors="replace") as f:
             for line in f:
                 line = line.strip()
                 if line:

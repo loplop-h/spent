@@ -207,7 +207,7 @@ class ClaudeStorage:
         turn_counters: dict[str, int] = {}
 
         with self._connect() as conn:
-            for line in path.read_text(encoding="utf-8").splitlines():
+            for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
                 stripped = line.strip()
                 if not stripped:
                     continue

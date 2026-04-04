@@ -189,7 +189,7 @@ def cc_compact(days: int, yes: bool) -> None:
     # Read all lines and filter.
     kept_lines: list[str] = []
     total_lines = 0
-    with open(log_path, "r", encoding="utf-8") as f:
+    with open(log_path, "r", encoding="utf-8", errors="replace") as f:
         for line in f:
             stripped = line.strip()
             if not stripped:
